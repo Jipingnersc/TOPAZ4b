@@ -1,0 +1,1844 @@
+      module mod_forcing_nersc
+      use mod_xc
+c --- TODO: taux/tauy/uwind,vwind should perhaps be on p-grid
+      implicit none
+c
+      character(len=5), save :: rforce   ! Forcing (ecmwf/ncep ..)
+      character(len=5), save :: clmflag  ! Climate forcing to use (era40 or "old")
+c
+c --- Forcing parameters -- particular to nersc 
+      real, dimension (1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy,4) ::   
+     &  uwind  ,    ! Winds            [m/s]
+     &  vwind  ,    ! Winds            [m/s]
+     &  clouds ,    ! Cloud Cover      [0-1]
+     &  slp    ,    ! Cloud Cover      [0-1]
+     &  relhum      ! Relative humidity[0-1]
+c
+c --- Units to connect to for reading fields above
+      integer, parameter :: 
+     &   unit_uwind  =111, 
+     &   unit_vwind  =112, 
+     &   unit_clouds =113, 
+     &   unit_relhum =114, 
+     &   unit_slp    =115   
+c
+C --- Time info 
+      real*8,save ::  
+     & dtime_uwind   ,
+     & dtime_vwind   ,
+     & dtime_relhum  ,
+     & dtime_clouds  ,
+     & dtime_slp
+c
+C --- Parameters
+      real, parameter :: cd=0.0012
+      real,parameter :: airdns  =    1.2
+      real,parameter :: slp0=1012.5
+c
+c
+C --- Relaxation time scales 
+      real, save :: time_srelax
+      real, save :: time_trelax
+c
+c
+c --- Climatology index used in hf forcing
+      real   , save,private :: hf_cwgt
+      real   , save,private :: hf_wc0,hf_wc1
+      integer, save,private :: hf_lc0,hf_lc1
+      integer, save,private :: hf_mc0,hf_mc1, hf_lastmc1
+      logical, save,private :: hf_cinit, hf_cread
+c
+c --- Last time a forcing field was read
+      real*8 ,save :: dtimefrc_last
+c --- time step of hf forcing
+      real*8 ,save :: hf_rdtime
+c
+c --- Lon and lat parameters for uniform grids
+c --- Kept for active hf forcing
+      real, save            :: flon, flat
+      real, save, private   :: dlon, dlat
+c
+      private :: rdncrec, rdncrec_1
+      contains
+c
+#if defined (FORCING_INLINE)
+c --- Reads high-frequency forcing fields from various input files.
+c --- Replacement for forfunh in forfun.F
+c --- TODO: Add various options for seatmp, surtmp etc
+      subroutine nersc_forcing_inline(dtime,fmonth)
+      implicit none
+      real*8,  intent(in) :: dtime,fmonth
+      real*8 :: dtimefrc,dtimefrc2
+      integer :: i,j
+      logical :: init
+c
+      include 'common_blocks.h'
+c
+      init=.false.
+      if (w0<-1.) then
+c ---   linear interpolation in time, so slots 3 and 4 are zero.
+!$OMP   PARALLEL DO PRIVATE(j,i)
+!$OMP&           SCHEDULE(STATIC,jblk)
+        do j=1-nbdy,jj+nbdy
+          do i=1-nbdy,ii+nbdy
+              taux(i,j,3) = 0.0
+              taux(i,j,4) = 0.0
+              tauy(i,j,3) = 0.0
+              tauy(i,j,4) = 0.0
+            wndspd(i,j,3) = 0.0
+            wndspd(i,j,4) = 0.0
+            airtmp(i,j,3) = 0.0
+            airtmp(i,j,4) = 0.0
+            vapmix(i,j,3) = 0.0
+            vapmix(i,j,4) = 0.0
+            precip(i,j,3) = 0.0
+            precip(i,j,4) = 0.0
+            radflx(i,j,3) = 0.0
+            radflx(i,j,4) = 0.0
+             swflx(i,j,3) = 0.0
+             swflx(i,j,4) = 0.0
+            surtmp(i,j,3) = 0.0
+            surtmp(i,j,4) = 0.0
+            seatmp(i,j,3) = 0.0
+            seatmp(i,j,4) = 0.0
+#if defined (NERSC_VERSION)
+            uwind (i,j,3) = 0.0
+            uwind (i,j,4) = 0.0
+            vwind (i,j,3) = 0.0
+            vwind (i,j,4) = 0.0
+            slp   (i,j,3) = 0.0
+            slp   (i,j,4) = 0.0
+            clouds(i,j,3) = 0.0
+            clouds(i,j,4) = 0.0
+            relhum(i,j,3) = 0.0
+            relhum(i,j,4) = 0.0
+#endif /* NERSC_VERSION */
+          enddo
+        enddo
+        init=.true.
+      end if
+c
+c --- Set weights for inear interpolation of climatology
+      call set_hfclmwgt(fmonth,init)
+c
+      hf_rdtime=6.d0/24.d0
+      dtimefrc =floor(dtime/hf_rdtime)*hf_rdtime
+      dtimefrc2=dtimefrc+hf_rdtime
+      if (mnproc==1) 
+     & print '(a,4f16.4)','dtimefrc, dtime, dtimefrc2,dtimefrclast',
+     &         dtimefrc,dtime,dtimefrc2,dtimefrc_last
+
+      if (trim(rforce)=='era40') then
+         if (w0<-1) then
+            call read_era40(dtimefrc ,1)
+            call read_era40(dtimefrc2,2)
+         else if (dtimefrc_last < dtimefrc2) then
+            call shifthf()
+            call read_era40(dtimefrc2,2)
+         end if
+      elseif (trim(rforce)=='ecnc') then
+         if (w0<-1) then
+            call read_ecmwf_nc(dtimefrc ,1)
+            call read_ecmwf_nc(dtimefrc2,2)
+         else if (dtimefrc_last < dtimefrc2) then
+            call shifthf()
+            call read_ecmwf_nc(dtimefrc2,2)
+         end if
+      elseif (trim(rforce)=='ecmwf') then
+         if (w0<-1) then
+            call read_ecmwf(dtimefrc ,1)
+            call read_ecmwf(dtimefrc2,2)
+         else if (dtimefrc_last < dtimefrc2) then
+            call shifthf()
+            call read_ecmwf(dtimefrc2,2)
+         end if
+      elseif (trim(rforce)=='metno') then
+         if (w0<-1) then
+            call read_ecmwf(dtimefrc ,1)
+            call read_ecmwf(dtimefrc2,2)
+         else if (dtimefrc_last < dtimefrc2) then
+            call shifthf()
+            call read_ecmwf(dtimefrc2,2)
+         end if
+      else
+         write(lp,'(a)') 'So far only era40 supports the '//
+     &                   'inline forcing option'
+         call xcstop('(xcstop)')
+      end if
+c
+c --- These options are not yet supported, and we should stop if they 
+c --- are active
+      if     (sstflg.eq.3) then
+         if (mnproc==1) write(lp,'(a)') 'sstflg=3 not supported'//
+     &      'for inline forcing'
+         call xcstop('(mod_forcing_nersc:nersc_forcing_inline)')
+      elseif (flxoff) then
+         if (mnproc==1) write(lp,'(a)') 'flux offset not supported'//
+     &      'for inline forcing'
+         call xcstop('(mod_forcing_nersc:nersc_forcing_inline)')
+      elseif (lwflag.eq.2 .or. sstflg.eq.2   .or.
+     &         icmflg.eq.2 .or. ticegr.eq.0.0     ) then
+         if (mnproc==1) write(lp,'(a)') 'lwflg=2, sstflg=2 iclmflg=2 '//
+     &      'and ticegr=0.0 not supported for inline forcing'
+         call xcstop('(mod_forcing_nersc:nersc_forcing_inline)')
+      end if
+c
+c --- Diagnostics    
+      if (w0<-1) then
+         call inline_diag('hforig',dtimefrc ,1)
+         call inline_diag('hforig',dtimefrc2,2)
+      else if (dtimefrc_last < dtimefrc2) then
+         call inline_diag('hforig',dtimefrc2,2)
+      end if
+c --- weights (linear)
+      w0=(dtimefrc2 - dtime    )/(dtimefrc2-dtimefrc)
+      w1=(dtime     - dtimefrc )/(dtimefrc2-dtimefrc)
+      w2=0.
+      w3=0.
+c --- time last read
+      dtimefrc_last=dtimefrc2
+c
+      end subroutine
+c
+      subroutine shifthf()
+      implicit none
+      integer :: i,j
+      include 'common_blocks.h'
+c --- Move old forcing to slot 1
+      do j= 1-nbdy,jj+nbdy
+      do i= 1-nbdy,ii+nbdy
+         precip(i,j,1) = precip(i,j,2)
+         airtmp(i,j,1) = airtmp(i,j,2)
+         clouds(i,j,1) = clouds(i,j,2)
+         uwind (i,j,1) = uwind (i,j,2)
+         vwind (i,j,1) = vwind (i,j,2)
+         taux  (i,j,1) = taux  (i,j,2)
+         tauy  (i,j,1) = tauy  (i,j,2)
+         wndspd(i,j,1) = wndspd(i,j,2)
+         slp   (i,j,1) = slp   (i,j,2)
+         relhum(i,j,1) = relhum(i,j,2)
+         vapmix(i,j,1) = vapmix(i,j,2)
+         swflx (i,j,1) = swflx (i,j,2)
+      enddo
+      enddo
+      end subroutine
+c
+c --- Sets climate weights used for linear interpolation
+c --- of climatology when running with hf forcing
+      subroutine set_hfclmwgt(x,init)
+      implicit none
+      real, intent   (in) :: x
+      logical, intent(in) :: init
+      hf_cwgt=x
+      hf_cinit=init
+
+      hf_mc0=mod(11+floor(hf_cwgt),12)+1
+      hf_mc1=mod(hf_mc0,12)+1
+      !hf_wc0=ceiling(hf_cwgt)-hf_cwgt
+      !hf_wc0=hf_mc0+1.d0-hf_cwgt
+      hf_wc1=hf_cwgt-floor(hf_cwgt)
+      hf_wc0=1.d0-hf_wc1
+      hf_cread=.false.
+c --- On init - read two cons. months into slot hf_lc0 and hf_lc1
+      if (hf_cinit) then
+         hf_lc0=1
+         hf_lc1=2
+         hf_lastmc1=hf_mc1
+c --- On new month - read data into slothf_lc1
+      else if (hf_mc1 /= hf_lastmc1 ) then
+         if (hf_mc0 == hf_lastmc1) then
+            hf_cread=.true.
+            hf_lc0=hf_lc1
+            hf_lc1=mod(hf_lc0,2)+1
+            hf_lastmc1=hf_mc1
+c ---    This shuld not happen
+         else
+           if (mnproc==1)  then
+              print *,'hf_cwgt',hf_cwgt
+              print *,'months ',hf_mc0,hf_mc1
+              print *,'weights',hf_wc0,hf_wc1
+              print *,'indices',hf_lc0,hf_lc1
+              print *,'lastrd ',hf_lastmc1
+              print *,'read ? ',hf_cread
+            end if
+            call xcstop('(set_hfclmwgt)')
+            stop '(set_hfclmwgt)'
+          end if
+      end if
+      if (mnproc==1)  then
+        print *,'hf_cwgt',hf_cwgt
+        print *,'months ',hf_mc0,hf_mc1
+        print *,'weights',hf_wc0,hf_wc1
+        print *,'indices',hf_lc0,hf_lc1
+        print *,'lastrd ',hf_lastmc1
+        print *,'read ? ',hf_cread
+        print *,'floor  (hf_cwgt)',floor(hf_cwgt)
+        print *,'ceiling(hf_cwgt)',ceiling(hf_cwgt)
+      end if
+      end subroutine
+c
+c
+c
+c --- Routine for reading era40 data from netcdf files, inline version
+c --- It is assumed that era40 files are organized in years and variable
+c --- names. Each netcdf file must have one record every 6 hour for 
+c --- that year. These records must come in chronological order,
+c --- starting Jan 1 at 00:00:00
+c --- TODO : Now all threads read the same netcdf file, 
+      subroutine read_era40(dtime,slot)
+      use mod_xc
+      use mod_common_ice
+      use mod_hycom_nersc
+      use netcdf
+      implicit none
+      real*8 ,  intent(in) :: dtime
+      integer,  intent(in) :: slot
+c
+c --- Data catalogue name
+      character(len=*), parameter :: era40_path='./ERA40/'
+c
+c --- Variable names - ERA40 1.125 by 1.125 
+      character(len=*), parameter :: vuwnd='U10M_sfc'
+      character(len=*), parameter :: vvwnd='V10M_sfc'
+      character(len=*), parameter :: vtair='T2M_sfc'
+      character(len=*), parameter :: vdewp='D2M_sfc'
+      character(len=*), parameter :: vprec='TP'
+      character(len=*), parameter :: vtcc ='TCC_sfc'
+      character(len=*), parameter :: vblh ='BLH_sfc'
+      character(len=*), parameter :: vlmsk='LSM_sfc'
+      character(len=*), parameter :: vpres='MSL_sfc'
+      character(len=*), parameter :: vssrd='SSRD_sfc'
+c
+c --- Hardcoded grid sizes 
+      integer, parameter :: nlon=320, nlat=161
+c
+      integer  :: i,j,k,ix,jy,irec,maxrec, nlon2, nlat2
+      real, dimension(nlon, nlat) :: 
+     &   tmp, tmpu, tmpv, tmpw, tmp2, tmptx, tmpty
+      real               :: e40_lon(nlon), e40_lat(nlat)
+      real               :: rfac,wndfac,cd_new,w4,wfact,svpair, svpdew
+      real               :: dlon,dlat,flon,flat,llon,llat,rtmp
+      integer            :: dimid, varid, ncid
+      integer            :: iyear, ihour, iday
+      logical            :: lfirst=.true.
+      character(len=80)  :: ncfil, ncfilu, ncfilv
+      character(len=4)   :: cyy, cyyp1
+c
+      include 'common_blocks.h'
+c
+      call forday(dtime,yrflag, iyear,iday,ihour)
+      irec  =  (iday-1)*4 + ihour/6 +1
+      if (mnproc==1) 
+     &  write(lp,'(a,i6,a,i4,x,i3,x,i2)')'ERA40 data from record: ',
+     &  irec, '  time= ',iyear,iday,ihour
+c
+c --- Set file names
+      write(cyy  ,'(i4.4)') iyear
+      write(cyyp1,'(i4.4)') iyear+1
+c
+c --- Check dimensions against hardcoded ones
+c --- Get longitude  & latitude for data  - use land mask file
+      ncfil=era40_path//'ans.LSM.nc'
+      call ncerr(NF90_open(trim(ncfil),NF90_NOCLOBBER,ncid))
+      call ncerr(nf90_inq_dimid(ncid, "lon", dimid))
+      call ncerr(nf90_inquire_dimension(ncid, dimid, len=nlon2))
+      call ncerr(nf90_inq_dimid(ncid, "lat", dimid))
+      call ncerr(nf90_inquire_dimension(ncid, dimid, len=nlat2))
+      call ncerr(nf90_inq_dimid(ncid, "record", dimid))
+      call ncerr(nf90_inquire_dimension(ncid, dimid, len=maxrec))
+      if (nlon/=nlon2.or.nlat/=nlat2) then
+         if (mnproc==1) then
+            write(lp,'(a)') 'Dimension mismatch in ERA40 data'
+            write(lp,'(a,2i5)') 'nlon :',nlon,nlon2
+            write(lp,'(a,2i5)') 'nlat :',nlat,nlat2
+         end if
+         call xcstop('(read_era40_inline)')
+         stop '(read_era40_inline)'
+      end if
+C 
+C --- New approach 
+      call ncerr(nf90_inq_varid(ncid, "Lo1", varid))
+      call ncerr(nf90_get_var  (ncid, varid, flon))
+      call ncerr(nf90_inq_varid(ncid, "La1", varid))
+      call ncerr(nf90_get_var  (ncid, varid, flat))
+      call ncerr(nf90_inq_varid(ncid, "Di", varid))
+      call ncerr(nf90_get_var  (ncid, varid, dlon))
+      call ncerr(nf90_inq_varid(ncid, "Dj", varid))
+      call ncerr(nf90_get_var  (ncid, varid, dlat))
+      call ncerr(nf90_close    (ncid))
+c
+c --- ERA40 precipitation   m/ 6hr -> m/month (rho=1000)
+      if (mnproc==1)print *,'ERA40 precip'
+      ncfil=era40_path//'fcs.6h.'//cyy//'.TP.nc'   ! Forecast field !
+      call ncerr(NF90_open(trim(ncfil),NF90_NOCLOBBER,ncid))
+      call ncerr(nf90_inq_varid(ncid, vprec, varid))
+      call ncerr(nf90_get_var  (ncid, varid, tmp,start=(/1,1,irec/)))
+      call ncerr(nf90_close    (ncid))
+      call era40_fix(vprec,tmp,nlon,nlat,flon,flat,dlon,dlat)
+C     call bilin_ecmwf2(tmp,nlon,nlat,flon,flat,dlon,dlat,  
+C    &                 precip(1-nbdy,1-nbdy,slot),plon,plat)   
+      call bicubic(tmp,nlon,nlat,flon,flat,dlon,dlat,  
+     &             precip(1-nbdy,1-nbdy,slot),plon,plat)   
+      if (mnproc==1) print *,'NB:bicubic interp of precip'
+      precip(:,:,slot)=precip(:,:,slot)/(6.*3600.) ! Precipitation is accumulated field...
+c
+c --- ERA40 air temperature   K 
+      if (mnproc==1) print *,'ERA40 airtmp'
+      ncfil=era40_path//'ans.6h.'//cyy//'.2T.nc'
+      call ncerr(NF90_open(trim(ncfil),NF90_NOCLOBBER,ncid))
+      call ncerr(nf90_inq_varid(ncid, vtair, varid))
+      call ncerr(nf90_get_var  (ncid, varid, tmp,start=(/1,1,irec/)))
+      call ncerr(nf90_close    (ncid))
+      call bilin_ecmwf2(tmp,nlon,nlat,flon,flat,dlon,dlat, 
+     &                  airtmp(1-nbdy,1-nbdy,slot),plon,plat)   
+      do j= 1-nbdy,jj+nbdy
+      do i= 1-nbdy,ii+nbdy
+         airtmp(i,j,slot) = airtmp(i,j,slot)-t0deg
+      end do
+      end do
+c
+c --- ERA40 clouds   []  (0-1)
+      if (mnproc==1)print *,'ERA40 tcc'
+      ncfil =era40_path//'ans.6h.'//cyy//'.TCC.nc'
+      call ncerr(NF90_open(trim(ncfil),NF90_NOCLOBBER,ncid))
+      call ncerr(nf90_inq_varid(ncid, vtcc, varid))
+      call ncerr(nf90_get_var  (ncid, varid, tmp,start=(/1,1,irec/)))
+      call ncerr(nf90_close    (ncid))
+      call bilin_ecmwf2(tmp ,nlon,nlat,flon,flat,dlon,dlat, 
+     &                 clouds(1-nbdy,1-nbdy,slot),plon,plat)   
+c
+c ---  ERA40 winds
+      if (mnproc==1)print *,'ERA40 u/v'
+      ncfilu=era40_path//'ans.6h.'//cyy//'.10U.nc'
+      call ncerr(NF90_open(trim(ncfilu),NF90_NOCLOBBER,ncid))
+      call ncerr(nf90_inq_varid(ncid, vuwnd, varid))
+      call ncerr(nf90_get_var  (ncid, varid, tmpu,start=(/1,1,irec/)))
+      call ncerr(nf90_close    (ncid))
+      ncfilv=era40_path//'ans.6h.'//cyy//'.10V.nc'
+      call ncerr(NF90_open(trim(ncfilv),NF90_NOCLOBBER,ncid))
+      call ncerr(nf90_inq_varid(ncid, vvwnd, varid))
+      call ncerr(nf90_get_var  (ncid, varid, tmpv,start=(/1,1,irec/)))
+      call ncerr(nf90_close    (ncid))
+c
+!#ifdef ERA40_WIND_POLE_FIX
+!         ! Rotatate ERA40 winds to x/y components on plane normal to NP
+!         xwnd=cos(elon*radian)*(-era40_vwnd) - sin(elon*radian)*era40_uwnd
+!         ywnd=sin(elon*radian)*(-era40_vwnd) + cos(elon*radian)*era40_uwnd
+!
+!         ! Average northernmost wind components - averaging strategy?
+!         !xwnd(:,nlat,1)=sum(xwnd(:,nlat-1,1))/nlon
+!         !ywnd(:,nlat,1)=sum(ywnd(:,nlat-1,1))/nlon
+!         xwnd(:,nlat,1)=xwnd(:,nlat-1,1)
+!         ywnd(:,nlat,1)=ywnd(:,nlat-1,1)
+!         era40_vwnd(:,nlat,1)=-xwnd(:,nlat,1)*cos(elon(:,nlat,1)*radian) - &
+!                               ywnd(:,nlat,1)*sin(elon(:,nlat,1)*radian)
+!         era40_uwnd(:,nlat,1)=-xwnd(:,nlat,1)*sin(elon(:,nlat,1)*radian) + &
+!                               ywnd(:,nlat,1)*cos(elon(:,nlat,1)*radian)
+!#endif
+c
+c --- Wind speed on original (colocated) grid
+      do j=1,nlat
+      do i=1,nlon
+         tmpw(i,j)=sqrt(tmpu(i,j)*tmpu(i,j)+ tmpv(i,j)*tmpv(i,j))
+         wndfac=(1.+sign(1.,tmpw(i,j)-11.))*.5
+         cd_new=(0.49+0.065*tmpw(i,j))*1.0e-3*wndfac+cd*(1.-wndfac)
+         wfact=tmpw(i,j)*airdns*cd_new
+         tmptx(i,j)=tmpu(i,j)*wfact
+         tmpty(i,j)=tmpv(i,j)*wfact
+      end do
+      end do
+c
+c --- Interpolate to u/v points
+      call bilin_ecmwf2(tmpu ,nlon,nlat,flon,flat,dlon,dlat, 
+     &                 uwind(1-nbdy,1-nbdy,slot),ulon,ulat)   
+      call bilin_ecmwf2(tmpv ,nlon,nlat,flon,flat,dlon,dlat,
+     &                 vwind(1-nbdy,1-nbdy,slot),vlon,vlat)   
+      call bilin_ecmwf2(tmptx,nlon,nlat,flon,flat,dlon,dlat, 
+     &                  taux(1-nbdy,1-nbdy,slot),ulon,ulat)   
+      call bilin_ecmwf2(tmpty,nlon,nlat,flon,flat,dlon,dlat, 
+     &                  tauy(1-nbdy,1-nbdy,slot),vlon,vlat)   
+      call bilin_ecmwf2(tmpw,nlon,nlat,flon,flat,dlon,dlat, 
+     &                  wndspd(1-nbdy,1-nbdy,slot),plon,plat)   
+c
+c --- Rotate winds/stress to model grid 
+      call rotate(uwind(1-nbdy,1-nbdy,slot), vwind(1-nbdy,1-nbdy,slot),   
+     &            plat (1-nbdy,1-nbdy)  , plon (1-nbdy,1-nbdy  ),
+     &            idm+2*nbdy,jdm+2*nbdy,'l2m')
+      call rotate(taux(1-nbdy,1-nbdy,slot), tauy(1-nbdy,1-nbdy,slot),  
+     &            plat(1-nbdy,1-nbdy  ), plon(1-nbdy,1-nbdy  ),
+     &            idm+2*nbdy,jdm+2*nbdy,'l2m')
+c
+! --  Pressure
+      if (mnproc==1)print *,'ERA40 slp'
+      ncfil=era40_path//'ans.6h.'//cyy//'.MSL.nc'
+      call ncerr(NF90_open(trim(ncfil),NF90_NOCLOBBER,ncid))
+      call ncerr(nf90_inq_varid(ncid, vpres, varid))
+      call ncerr(nf90_get_var  (ncid, varid, tmp,start=(/1,1,irec/)))
+      call ncerr(nf90_close    (ncid))
+      call bilin_ecmwf2(tmp ,nlon,nlat,flon,flat,dlon,dlat, 
+     &                 slp(1-nbdy,1-nbdy,slot),plon,plat)   
+c
+! --- Relative humidity + vapor mixing ratio
+      if (mnproc==1)print *,'ERA40 relhum'
+      ncfil=era40_path//'ans.6h.'//cyy//'.2D.nc'
+      call ncerr(NF90_open(trim(ncfil),NF90_NOCLOBBER,ncid))
+      call ncerr(nf90_inq_varid(ncid, vdewp, varid))
+      call ncerr(nf90_get_var  (ncid, varid, tmp,start=(/1,1,irec/)))
+      call ncerr(nf90_close    (ncid))
+      call bilin_ecmwf2(tmp ,nlon,nlat,flon,flat,dlon,dlat, 
+     &                  relhum(1-nbdy,1-nbdy,slot),plon,plat)   
+      do j=1-nbdy,jdm+nbdy
+      do i=1-nbdy,idm+nbdy
+         svpair=satvap(airtmp(i,j,slot)+t0deg)
+         svpdew=satvap(relhum(i,j,slot))
+         rtmp= relhumid(svpair,svpdew,slp(i,j,slot))*0.01
+         relhum(i,j,slot)=rtmp
+         relhum(i,j,slot)  =max(0.0,min(relhum(i,j,slot),1.0))
+         vapmix(i,j,slot) = rhtovpmix(relhum(i,j,slot),
+     &                             airtmp(i,j,slot)+t0deg,slp(i,j,slot))
+         slp(i,j,slot)=slp(i,j,slot)*0.01 ! Pa -> mBar (HPa)
+      enddo
+      enddo
+c
+C --- SW radiation - this one is  off for now
+      if (mnproc==1)print *,'ERA40 ssr'
+      if (.false.) then
+         ncfil =era40_path//'fcs.6h.'//cyy//'.SSRD.nc' ! Forecast field !
+         call ncerr(NF90_open(trim(ncfil),NF90_NOCLOBBER,ncid))
+         call ncerr(nf90_inq_varid(ncid, vssrd, varid))
+         call ncerr(nf90_get_var  (ncid, varid, tmp,start=(/1,1,irec/)))
+         call ncerr(nf90_close    (ncid))
+c
+c ---   ssrd is accumulated over 6hrs, midpoint is 6hr-3hr
+         if (irec==maxrec)  then
+            ncfil=era40_path//'fcs.6h.'//cyyp1//'.SSRD.nc' ! Forecast field !
+            call ncerr(NF90_open(trim(ncfil),NF90_NOCLOBBER,ncid))
+            call ncerr(nf90_inq_varid(ncid, vssrd, varid))
+            call ncerr(nf90_get_var  (ncid, varid, tmp2,
+     &                                start=(/1,1,1/)))
+            call ncerr(nf90_close    (ncid))
+         else if (irec<maxrec) then
+            ncfil =era40_path//'fcs.6h.'//cyy//'.SSRD.nc' ! Forecast field !
+            call ncerr(NF90_open(trim(ncfil),NF90_NOCLOBBER,ncid))
+            call ncerr(nf90_inq_varid(ncid, vssrd, varid))
+            call ncerr(nf90_get_var  (ncid, varid, tmp2,
+     &                                start=(/1,1,irec+1/)))
+            call ncerr(nf90_close    (ncid))
+         else
+            print *,'You shouldnt be here ...'
+            print *,irec,maxrec
+            call xcstop('(read_era40)')
+            stop '(read_era40)'
+         end if
+         tmp=(tmp+tmp2)*0.5d0
+c
+         call bilin_ecmwf2(tmp,nlon,nlat,flon,flat,dlon,dlat, 
+     &                    swflx(1-nbdy,1-nbdy,slot),plon,plat)   
+         swflx(:,:,slot)=swflx(:,:,slot)/(6*3600) ! Wm^-2 * s - > Wm^-2
+      else
+         if (mnproc==1) then
+          write(lp,'(a)') 'TODO - treat swfl in read_era40_inline'
+         end if
+      end if
+
+C --- These variables are also available
+C --- fblh =era40_path//'fcs.6h.'//cyy//'.BLH.nc'  ! Forecast field !
+C --- ficec=era40_path//'ans.6h.'//rt%cyy//'.CI.nc'
+C --- fZ   =era40_path//'ans.Z.nc'
+c
+      lfirst=.false.
+c
+      END subroutine read_era40
+c
+c
+c --- Routine for reading era40 data from netcdf files, inline version
+c --- It is assumed that era40 files are organized in years and variable
+c --- names. Each netcdf file must have one record every 6 hour for 
+c --- that year. These records must come in chronological order,
+c --- starting Jan 1 at 00:00:00
+c --- TODO : Now all threads read the same netcdf file, 
+      subroutine read_ecmwf_nc(dtime,slot)
+      use mod_xc
+      use netcdf
+      use mod_common_ice
+      use mod_hycom_nersc
+      implicit none
+      real*8, intent(in) :: dtime
+      integer, intent(in) :: slot
+c
+      ! Data catalogue name
+      character(len=*), parameter :: ecmwf_path ='./Ecmwf.nc/'
+      character(len=*), parameter :: era40_cpath='./ERA40-Clim/'
+      !character(len=*), parameter :: ecmwf_path='./ECMWFR_T799/'
+c
+      ! Variable names - Ecmwf 0.25 x 0.25
+      character(len=*), parameter :: vuwnd='U10M'
+      character(len=*), parameter :: vvwnd='V10M'
+      character(len=*), parameter :: vtair='T2M'
+      character(len=*), parameter :: vdewp='D2M'
+      character(len=*), parameter :: vprec='TP'
+      character(len=*), parameter :: vtcc ='TCC'
+      character(len=*), parameter :: vpres='MSL'
+c
+c --- Hardcoded grid sizes 
+      integer, parameter :: nlon=1440, nlat=721
+c
+      real, dimension(nlon, nlat) :: 
+     &   tmp, tmpu, tmpv, tmpw, tmp2, tmptx, tmpty, lmsk
+      real               :: eclon(nlon), eclat(nlat), rtmp
+c
+      character(len= 4)  :: cyy, cyyp1
+      character(len=80)  :: ncfil, ncfilu, ncfilv
+      integer  :: i,j,k,irec,maxrec
+      real :: rfac,wndfac,cd_new,w4,wfact,svpair, svpdew,wspd
+      integer :: nlon2,nlat2
+      integer :: im1,ip1,jm1,jp1,iyear, iday, ihour
+      integer :: ncid, dimid, varid, ierr
+      logical :: first=.true.
+c --- Files are kept open, so we store file and var ids
+      integer, save :: ncidu=-9999, ncidv=-9999,nciddp=-9999,
+     &   ncidat=-9999,ncidpr=-9999, ncidcc=-9999
+c
+      integer, save :: varidu,varidv,variddp,varidat,varidpr,
+     &   varidcc
+      real, dimension(1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy) :: 
+     &   tu, tv
+c
+      real, dimension(1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy,2) :: 
+     &   cprecip
+c
+      include 'common_blocks.h'
+c
+      call forday(dtime,yrflag, iyear,iday,ihour)
+      irec  =  (iday-1)*4 + ihour/6 +1
+      if (mnproc==1) 
+     &  write(lp,'(a,i6,a,i4,x,i3,x,i2)')'Ecnc data from record: ',
+     &  irec, '  time= ',iyear,iday,ihour
+c
+c --- Set file names
+      write(cyy  ,'(i4.4)') iyear
+      write(cyyp1,'(i4.4)') iyear+1
+c
+c
+c --- Check dimensions against hardcoded ones
+c --- Get longitude  & latitude for data  - use land mask file
+c --- Only on first pass
+      if (first) then
+         ncfil=ecmwf_path//'ec_atmo_geo_mad_T2M_'//cyy//'.nc'
+         call ncerr(NF90_open(trim(ncfil),NF90_NOCLOBBER,ncid))
+         call ncerr(nf90_inq_dimid(ncid, "lon", dimid))
+         call ncerr(nf90_inquire_dimension(ncid, dimid, len=nlon2))
+         call ncerr(nf90_inq_dimid(ncid, "lat", dimid))
+         call ncerr(nf90_inquire_dimension(ncid, dimid, len=nlat2))
+         call ncerr(nf90_inq_dimid(ncid, "time", dimid))
+         call ncerr(nf90_inquire_dimension(ncid, dimid, len=maxrec))
+         if (nlon/=nlon2.or.nlat/=nlat2) then
+            if (mnproc==1) then
+               write(lp,'(a)') 'Dimension mismatch in Ecnc data'
+               write(lp,'(a,2i5)') 'nlon :',nlon,nlon2
+               write(lp,'(a,2i5)') 'nlat :',nlat,nlat2
+            end if
+            call xcstop('(read_ecmwf_nc)')
+            stop '(read_ecmwf_nc)'
+         end if
+         call ncerr(nf90_inq_varid(ncid, "lon", varid))
+         call ncerr(nf90_get_var  (ncid, varid, eclon))
+         call ncerr(nf90_inq_varid(ncid, "lat", varid))
+         call ncerr(nf90_get_var  (ncid, varid, eclat))
+         call ncerr(nf90_close    (ncid))
+         flon=eclon(1) ; flat=eclat(1) ;
+         dlon=eclon(2)-eclon(1) ; dlat=eclat(2)-eclat(1)
+      end if
+c
+c
+c --- Ecmwf precipitation   m/ 6hr -> m/month (rho=1000)
+c --- TODO: ust be handled by climatology 
+c
+c ---    Read one precipitation field from climatology. cprecip is kept
+c ---    locally.
+      if (mnproc==1)print *,'Ecnc tcc (climatology)'
+      if (hf_cinit) then
+       call hf_readclm(cprecip(1-nbdy,1-nbdy,hf_lc0),'precip',hf_mc0)
+       call hf_readclm(cprecip(1-nbdy,1-nbdy,hf_lc1),'precip',hf_mc1)
+      else if (hf_cread) then
+       cprecip(:,:,hf_lc0)=cprecip(:,:,hf_lc1)
+       call hf_readclm(cprecip(1-nbdy,1-nbdy,hf_lc1),'precip',hf_mc1)
+      end if
+c ---    Interpolate climatology onto hf forcing field times
+      do j=1-nbdy,jdm+nbdy
+      do i=1-nbdy,idm+nbdy
+         precip(i,j,slot) = hf_wc0*cprecip(i,j,hf_lc0) +
+     &                   hf_wc1*cprecip(i,j,hf_lc1) 
+      end do
+      end do
+c
+c --- Ecnc air temperature   K 
+      if (mnproc==1) print *,'Ecnc airtmp'
+      ncfil=ecmwf_path//'ec_atmo_geo_mad_T2M_'//cyy//'.nc'
+      call rdncrec(ncfil,vtair,tmp,nlon,nlat,irec)
+      call bilin_ecmwf2(tmp,nlon,nlat,flon,flat,dlon,dlat, 
+     &                  airtmp(1-nbdy,1-nbdy,slot),plon,plat)   
+c
+c --- Ecnc clouds   []  (0-1)
+      if (mnproc==1)print *,'Ecnc tcc'
+      ncfil =ecmwf_path//'ec_atmo_geo_mad_TCC_'//cyy//'.nc'
+      call rdncrec(ncfil,vtcc,tmp,nlon,nlat,irec)
+      call bilin_ecmwf2(tmp ,nlon,nlat,flon,flat,dlon,dlat, 
+     &                 clouds(1-nbdy,1-nbdy,slot),plon,plat)   
+      
+c
+c ---  Ecnc winds
+      if (mnproc==1)print *,'Ecnc u/v'
+      ncfilu=ecmwf_path//'ec_atmo_geo_mad_U10M_'//cyy//'.nc'
+      ncfilv=ecmwf_path//'ec_atmo_geo_mad_V10M_'//cyy//'.nc'
+      call rdncrec(ncfilu,vuwnd,tmpu,nlon,nlat,irec)
+      call rdncrec(ncfilv,vvwnd,tmpv,nlon,nlat,irec)
+c
+Cc --- Wind speed on original (colocated) grid
+C      call xcsync(flush_lp)
+C      do j=1,nlat
+C      do i=1,nlon
+C         tmpw(i,j)=sqrt(tmpu(i,j)*tmpu(i,j)+ tmpv(i,j)*tmpv(i,j))
+C         wndfac=(1.+sign(1.,tmpw(i,j)-11.))*.5
+C         cd_new=(0.49+0.065*tmpw(i,j))*1.0e-3*wndfac+cd*(1.-wndfac)
+C         wfact=tmpw(i,j)*airdns*cd_new
+C         tmptx(i,j)=tmpu(i,j)*wfact
+C         tmpty(i,j)=tmpv(i,j)*wfact
+C      end do
+C      end do
+Cc --- Interpolate to u/v points
+C      call bilin_ecmwf2(tmpu ,nlon,nlat,flon,flat,dlon,dlat, 
+C     &                 uwind(1-nbdy,1-nbdy,slot),ulon,ulat)   
+C      call bilin_ecmwf2(tmpv ,nlon,nlat,flon,flat,dlon,dlat,
+C     &                 vwind(1-nbdy,1-nbdy,slot),vlon,vlat)   
+C      call bilin_ecmwf2(tmptx,nlon,nlat,flon,flat,dlon,dlat, 
+C     &                  taux(1-nbdy,1-nbdy,slot),ulon,ulat)   
+C      call bilin_ecmwf2(tmpty,nlon,nlat,flon,flat,dlon,dlat, 
+C     &                  tauy(1-nbdy,1-nbdy,slot),vlon,vlat)   
+C      call bilin_ecmwf2(tmpw,nlon,nlat,flon,flat,dlon,dlat, 
+C     &                  wndspd(1-nbdy,1-nbdy,slot),plon,plat)   
+C      call xcsync(flush_lp)
+c
+c --- New approach. The original grid is quite large - so
+c --- for small MPI tiles this should be more effective. 
+c
+c --- Interpolate to u points
+      call bilin_ecmwf2(tmpu ,nlon,nlat,flon,flat,dlon,dlat, 
+     &                 uwind(1-nbdy,1-nbdy,slot),ulon,ulat)   
+      call bilin_ecmwf2(tmpv ,nlon,nlat,flon,flat,dlon,dlat,
+     &                 vwind(1-nbdy,1-nbdy,slot),vlon,vlat)   
+c --- taux in u points
+      call bilin_ecmwf2(tmpu ,nlon,nlat,flon,flat,dlon,dlat, 
+     &                 tu(1-nbdy,1-nbdy),ulon,ulat)   
+      call bilin_ecmwf2(tmpv ,nlon,nlat,flon,flat,dlon,dlat,
+     &                 tv(1-nbdy,1-nbdy),ulon,ulat)   
+      do j=1-nbdy,jj+nbdy
+      do i=1-nbdy,ii+nbdy
+         wspd=sqrt(tu(i,j)*tu(i,j)+ tv(i,j)*tv(i,j))
+         wndfac=(1.+sign(1.,wspd-11.))*.5
+         cd_new=(0.49+0.065*wspd)*1.0e-3*wndfac+cd*(1.-wndfac)
+         wfact=wspd*airdns*cd_new
+         taux(i,j,slot) = wfact*tu(i,j)
+      end do
+      end do
+c --- tauy in v points
+      call bilin_ecmwf2(tmpu ,nlon,nlat,flon,flat,dlon,dlat, 
+     &                 tu(1-nbdy,1-nbdy),vlon,vlat)   
+      call bilin_ecmwf2(tmpv ,nlon,nlat,flon,flat,dlon,dlat,
+     &                 tv(1-nbdy,1-nbdy),vlon,vlat)   
+      do j=1-nbdy,jj+nbdy
+      do i=1-nbdy,ii+nbdy
+         wspd=sqrt(tu(i,j)*tu(i,j)+ tv(i,j)*tv(i,j))
+         wndfac=(1.+sign(1.,wspd-11.))*.5
+         cd_new=(0.49+0.065*wspd)*1.0e-3*wndfac+cd*(1.-wndfac)
+         wfact=wspd*airdns*cd_new
+         tauy(i,j,slot) = wfact*tv(i,j)
+      end do
+      end do
+c --- wspd in p points
+      call bilin_ecmwf2(tmpu ,nlon,nlat,flon,flat,dlon,dlat, 
+     &                 tu(1-nbdy,1-nbdy),plon,plat)   
+      call bilin_ecmwf2(tmpv ,nlon,nlat,flon,flat,dlon,dlat,
+     &                 tv(1-nbdy,1-nbdy),plon,plat)   
+      do j=1-nbdy,jj+nbdy
+      do i=1-nbdy,ii+nbdy
+         wndspd(i,j,slot)=sqrt(tu(i,j)*tu(i,j)+ tv(i,j)*tv(i,j))
+      end do
+      end do
+c
+c
+c --- Rotate winds/stress to model grid 
+      call rotate(uwind(1-nbdy,1-nbdy,slot), vwind(1-nbdy,1-nbdy,slot),   
+     &            plat (1-nbdy,1-nbdy)  , plon (1-nbdy,1-nbdy  ),
+     &            idm+2*nbdy,jdm+2*nbdy,'l2m')
+      call rotate(taux(1-nbdy,1-nbdy,slot), tauy(1-nbdy,1-nbdy,slot),  
+     &            plat(1-nbdy,1-nbdy  ), plon(1-nbdy,1-nbdy  ),
+     &            idm+2*nbdy,jdm+2*nbdy,'l2m')
+c
+c --  Pressure
+      if (mnproc==1)print *,'Ecnc slp'
+      ncfil=ecmwf_path//'ec_atmo_geo_mad_MSL_'//cyy//'.nc'
+      call rdncrec(ncfil,vpres,tmp,nlon,nlat,irec)
+      call bilin_ecmwf2(tmp ,nlon,nlat,flon,flat,dlon,dlat, 
+     &                 slp(1-nbdy,1-nbdy,slot),plon,plat)   
+c
+c --- Relative humidity ( + vapor mixing ratio )
+      if (mnproc==1)print *,'Ecnc relhum'
+      ncfil=ecmwf_path//'ec_atmo_geo_mad_D2M_'//cyy//'.nc'
+      call rdncrec(ncfil,vdewp,tmp,nlon,nlat,irec)
+      call bilin_ecmwf2(tmp ,nlon,nlat,flon,flat,dlon,dlat, 
+     &                  relhum(1-nbdy,1-nbdy,slot),plon,plat)   
+c
+c --- Downward shortwave radiation
+      if (mnproc==1)print *,'Ecnc ssr'
+      if (.false.) then
+      else
+         if (mnproc==1) then
+          write(lp,'(a)') 'TODO - treat swfl in read_era40_inline'
+         end if
+      end if
+c
+c --- Final processing
+      do j=1-nbdy,jj+nbdy
+      do i=1-nbdy,ii+nbdy
+         svpair=satvap(airtmp(i,j,slot))
+         svpdew=satvap(relhum(i,j,slot))
+         !relhum(i,j,slot)= relhumid(svpair,svpdew,slp(i,j,slot))*0.01
+         rtmp= relhumid(svpair,svpdew,slp(i,j,slot))*0.01
+         relhum(i,j,slot)=rtmp
+         relhum(i,j,slot)  =max(0.0,min(relhum(i,j,slot),1.0))
+         vapmix(i,j,slot) = rhtovpmix(relhum(i,j,slot),
+     &                             airtmp(i,j,slot),slp(i,j,slot))
+         airtmp(i,j,slot) = airtmp(i,j,slot)-t0deg ! K  -> C
+         slp   (i,j,slot)=     slp(i,j,slot)*0.01  ! Pa -> mBar (HPa)
+      enddo
+      enddo
+      first=.false.
+      END subroutine read_ecmwf_nc
+c
+c
+      subroutine read_ecmwf(dtime,slot)
+      use mod_xc
+      use mod_common_ice
+      use mod_hycom_nersc
+      implicit none
+      real*8, intent(in) :: dtime
+      integer, intent(in) :: slot
+c --- Input Data dimensions (to be decided)
+      integer :: nxd, nyd
+c
+      integer mo,im1,ip1,jm1,jp1
+      real fac,w4,wfact,rtmp
+      logical ex
+      real lonref,dlon
+      real latref,dlat
+      real, dimension(:, :), allocatable :: 
+     &   tmp, tmpu, tmpv, tmpw, tmp2, tmptx, tmpty
+      integer i,j,irec,k, ihour, iday, iyear
+      integer imax(2),imin(2)
+      real maxtem,maxdew,maxmsl,maxuuu,maxvvv
+      real mintem,mindew,minmsl,minuuu,minvvv
+      character(len=9) path0
+      character(len=4) cyy
+      real wndfac,cd_new, svpair, svpdew
+      real, dimension(1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy,2) :: 
+     &   cprecip,cclouds
+      include 'common_blocks.h'
+c
+      call forday(dtime,yrflag, iyear,iday,ihour)
+      irec=(iday-1)*4+ihour/6+1
+      write(cyy  ,'(i4.4)') iyear
+c --- Set up for forcing
+      if (rforce=='ecmwf') then
+         path0(1:9)='./Ecmwfr/'
+         nxd=320
+         nyd=160
+      else if (rforce=='metno') then
+         path0(1:9)='./Met.no/'
+         nxd=720
+         nyd=361
+      else
+         write(lp,*) 'read_ecmwf only understands "metno" or "ecmwf" '
+         write(lp,*) 'forcing ID'
+         call flush(lp)
+         call xcstop('(read_ecmwf)')
+         stop '(read_ecmwf)'
+      end if
+c
+      allocate( tmpu (nxd,nyd) )
+      allocate( tmpv (nxd,nyd) )
+      allocate( tmpw (nxd,nyd) )
+      allocate( tmp2 (nxd,nyd) )
+      allocate( tmptx(nxd,nyd) )
+      allocate( tmpty(nxd,nyd) )
+c
+c --- read ecmwf headers
+      inquire(file=trim(path0)//'ecmwf_'//cyy//'.hdr',exist=ex)
+      if (.not.ex) then
+         if (mnproc==1) write(lp,*),
+     &     'read_ecmwf:  file does not exist :',trim(path0),'ecmwf_',
+     &     cyy,'.hdr'
+         call xcstop ('(read_ecmwf)')
+         stop '(read_ecmwf)'
+      endif
+      open(10,file=trim(path0)//'ecmwf_'//cyy//'.hdr',status='old')
+         read(10,'(t14,i5)')i
+         read(10,'(t14,i5)')j
+         read(10,'(t14,2f9.4)')lonref,dlon
+         read(10,'(t14,2f9.4)')latref,dlat
+      close(10)
+
+c --- Read input files
+c
+c --- Read one precipitation field from climatology. cprecip is kept
+c --- locally.
+      if (mnproc==1)print *,'Ecmwf precip (climatology)'
+      if (hf_cinit) then
+       call hf_readclm(cprecip(1-nbdy,1-nbdy,hf_lc0),'precip',hf_mc0)
+       call hf_readclm(cprecip(1-nbdy,1-nbdy,hf_lc1),'precip',hf_mc1)
+      else if (hf_cread) then
+       cprecip(:,:,hf_lc0)=cprecip(:,:,hf_lc1)
+       call hf_readclm(cprecip(1-nbdy,1-nbdy,hf_lc1),'precip',hf_mc1)
+      end if
+c --- Interpolate climatology onto hf forcing field times
+      do j=1-nbdy,jdm+nbdy
+      do i=1-nbdy,idm+nbdy
+         precip(i,j,slot) = hf_wc0*cprecip(i,j,hf_lc0) +
+     &                   hf_wc1*cprecip(i,j,hf_lc1) 
+      end do
+      end do
+c
+c --- Read one cloud field from climatology. ccloud is kept
+c --- locally.
+      if (mnproc==1)print *,'Ecmwf clouds (climatology)'
+      if (hf_cinit) then
+       call hf_readclm(cclouds(1-nbdy,1-nbdy,hf_lc0),'cloud',hf_mc0)
+       call hf_readclm(cclouds(1-nbdy,1-nbdy,hf_lc1),'cloud',hf_mc1)
+      else if (hf_cread) then
+       cclouds(:,:,hf_lc0)=cclouds(:,:,hf_lc1)
+       call hf_readclm(cprecip(1-nbdy,1-nbdy,hf_lc1),'cloud',hf_mc1)
+      end if
+c --- Interpolate climatology onto hf forcing field times
+      do j=1-nbdy,jdm+nbdy
+      do i=1-nbdy,idm+nbdy
+         clouds(i,j,slot) = hf_wc0*cclouds(i,j,hf_lc0) +
+     &                   hf_wc1*cclouds(i,j,hf_lc1) 
+      end do
+      end do
+c
+c --- air temperature
+      call getuf(trim(path0)//'ecmwf_'//cyy//'_tem.uf',
+     &   irec,100.,400., tmp,nxd,nyd)
+      call bilin_ecmwf2(tmp,nxd,nyd,lonref,latref,dlon,dlat,
+     &                  airtmp(1-nbdy,1-nbdy,slot),plon,plat)
+c 
+c --- dewpoint temperature
+      call getuf(trim(path0)//'ecmwf_'//cyy//'_dew.uf',
+     &   irec,100.,400., tmp,nxd,nyd)
+      call bilin_ecmwf2(tmp,nxd,nyd,lonref,latref,dlon,dlat,
+     &                  relhum(1-nbdy,1-nbdy,slot),plon,plat)
+c
+c --- SLP             
+      call getuf(trim(path0)//'ecmwf_'//cyy//'_msl.uf',
+     &   irec,100.,1400., tmp,nxd,nyd)
+      call bilin_ecmwf2(tmp,nxd,nyd,lonref,latref,dlon,dlat,
+     &                  slp(1-nbdy,1-nbdy,slot),plon,plat)
+c
+c --- Winds
+      call getuf(trim(path0)//'ecmwf_'//cyy//'_uuu.uf',
+     &   irec,-100.,100., tmpu,nxd,nyd)
+      call getuf(trim(path0)//'ecmwf_'//cyy//'_vvv.uf',
+     &   irec,-100.,100., tmpv,nxd,nyd)
+c
+c --- Wind speed on original (colocated) grid
+      do j=1,nyd
+      do i=1,nxd
+         tmpw(i,j)=sqrt(tmpu(i,j)*tmpu(i,j)+ tmpv(i,j)*tmpv(i,j))
+         wndfac=(1.+sign(1.,tmpw(i,j)-11.))*.5
+         cd_new=(0.49+0.065*tmpw(i,j))*1.0e-3*wndfac+cd*(1.-wndfac)
+         wfact=tmpw(i,j)*airdns*cd_new
+         tmptx(i,j)=tmpu(i,j)*wfact
+         tmpty(i,j)=tmpv(i,j)*wfact
+      end do
+      end do
+c
+c --- Interpolate to u/v points
+      call bilin_ecmwf2(tmpu ,nxd,nyd,lonref,latref,dlon,dlat, 
+     &                 uwind(1-nbdy,1-nbdy,slot),ulon,ulat)   
+      call bilin_ecmwf2(tmpv ,nxd,nyd,lonref,latref,dlon,dlat,
+     &                 vwind(1-nbdy,1-nbdy,slot),vlon,vlat)   
+      call bilin_ecmwf2(tmptx,nxd,nyd,lonref,latref,dlon,dlat, 
+     &                  taux(1-nbdy,1-nbdy,slot),ulon,ulat)   
+      call bilin_ecmwf2(tmpty,nxd,nyd,lonref,latref,dlon,dlat, 
+     &                  tauy(1-nbdy,1-nbdy,slot),vlon,vlat)   
+      call bilin_ecmwf2(tmpw,nxd,nyd,lonref,latref,dlon,dlat, 
+     &                  wndspd(1-nbdy,1-nbdy,slot),plon,plat)   
+c
+c --- Rotate winds/stress to model grid 
+      call rotate(uwind(1-nbdy,1-nbdy,slot), vwind(1-nbdy,1-nbdy,slot), 
+     &            plat (1-nbdy,1-nbdy)  , plon (1-nbdy,1-nbdy  ),
+     &            idm+2*nbdy,jdm+2*nbdy,'l2m')
+      call rotate(taux(1-nbdy,1-nbdy,slot), tauy(1-nbdy,1-nbdy,slot),  
+     &            plat(1-nbdy,1-nbdy  ), plon(1-nbdy,1-nbdy  ),
+     &            idm+2*nbdy,jdm+2*nbdy,'l2m')
+c
+c --- Final processing
+      do j=1-nbdy,jdm+nbdy
+      do i=1-nbdy,idm+nbdy
+         svpair=satvap(airtmp(i,j,slot))
+         svpdew=satvap(relhum(i,j,slot)) ! relhum contains dewp temp here
+         !relhum(i,j,slot)= relhumid(svpair,svpdew,slp(i,j,slot)*100.)*0.01
+         rtmp= relhumid(svpair,svpdew,slp(i,j,slot)*100.)*0.01
+         relhum(i,j,slot)=rtmp
+         relhum(i,j,slot)  =max(0.0,min(relhum(i,j,slot),1.0))
+         vapmix(i,j,slot) = rhtovpmix(relhum(i,j,slot),
+     &                             airtmp(i,j,slot),slp(i,j,slot)*100.)
+         airtmp(i,j,slot) = airtmp(i,j,slot)-t0deg ! K  -> C
+      enddo
+      enddo
+c
+c --- Diagnostic output
+      write(lp,'(a,i6,a,i4,x,i3,x,i2,a,i3,i3)')
+     &   'Ecmwfr data from record: ',irec,'  rt= ',iyear,iday-1,
+     &   ihour
+      call flush(lp)
+      end subroutine read_ecmwf
+c
+c
+c --- "Helper" routine used in read_ecmwf
+      subroutine getuf(fname,irec,vmin,vmax,fld,nx,ny)
+      implicit none
+      character(len=*), intent(in)  :: fname
+      integer         , intent(in)  :: irec,nx,ny
+      real            , intent(in)  :: vmax,vmin
+      real            , intent(out) :: fld(nx,ny)
+      real*4, dimension(nx,ny) ::  tmpin
+      logical :: ex
+      integer :: imin(2),imax(2),j 
+      real :: minfld, maxfld
+      inquire(file=fname,exist=ex)
+      inquire(iolength=j) tmpin
+      if (.not.ex) then
+         if (mnproc==1) write(lp,*), 
+     &      'read_ecmwf:  file does not exist :',fname
+         call xcstop ('(read_ecmwf)')
+         stop '(read_ecmwf)'
+      endif
+      open(21,file=fname,form='unformatted',access='direct',recl=j)
+      read(21,rec=irec)tmpin; fld=dble(tmpin) 
+      close(21)
+      imax(1:2)=maxloc(fld); maxfld=fld(imax(1),imax(2))
+      if (maxfld > vmax)  then
+         if (mnproc==1) print '(a,g13.5,2i5)',
+     &      'read_ecmwf: Max value and location : ',maxfld,imax(:)
+         call xcstop('(read_ecmwf: max fld too large)')
+         stop 'Read_ecmwf: max fld too large'
+      end if
+      imin(1:2)=minloc(fld); minfld=fld(imin(1),imin(2))
+      if (minfld < vmin)  then
+         if (mnproc==1) print '(a,g13.5,2i5)',
+     &      'read_ecmwf: Min value and location : ',minfld,imin(:)
+         call xcstop('(read_ecmwf: min fld too small)')
+         stop 'Read_ecmwf: min fld too small'
+      end if
+      end subroutine
+c
+c
+      subroutine hf_readclm(fld,cfld,mnth)
+      use mod_xc
+      use mod_za
+      implicit none
+c --- Read one Field from climatology and put it into 
+c --- fld.
+      character(len=*), intent(in) :: cfld
+      integer         , intent(in) :: mnth
+      real, dimension(1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy) :: fld
+      character preambl(5)*79
+      character (len=80) :: cline
+      integer :: i,ios,k,imnth
+      real :: hmina, hmaxa, hminb, hmaxb
+      include 'common_blocks.h'
+
+c
+      if (mnproc==1) write(lp,'(a)') 'Reading '//cfld
+     &   //' climatology(hf)'
+      call zaiopf(trim(flnmfor)//'forcing.'//cfld//'.a', 'old', 333)
+      if (mnproc==1) then
+         open (unit=uoff+333,
+     &      file=trim(flnmfor)//'forcing.'//cfld//'.b',
+     &      status='old', action='read')
+         read (uoff+333,'(a79)') preambl
+      end if
+      !call prembl_print(preambl)
+      do k=1,mnth-1
+         call zaiosk(333)
+         call zagetc(cline,ios,uoff+333)
+      end do
+      call zagetc(cline,ios,uoff+333)
+      i = index(cline,'=')
+      read (cline(i+1:),*) imnth,hminb,hmaxb
+      if  (imnth/=mnth) then
+         write(lp,'(a)') 'Month mismatch is this montlhy data?'
+         call xcstop('(hf_readclm)')
+         stop '(hf_readclm)'
+      end if
+      call zaiord(fld,ip,.false., hmina,hmaxa, 333)
+      if     (abs(hmina-hminb).gt.abs(hminb)*1.e-4 .or.
+     &        abs(hmaxa-hmaxb).gt.abs(hmaxb)*1.e-4     ) then
+        if     (mnproc.eq.1) then
+        write(lp,'(/ a / a,i3 / a / a,1p3e14.6 / a,1p3e14.6 /)')
+     &    cfld//' error - .a and .b files not consistent:',
+     &    'iunit = ',333,
+     &    cline,
+     &    '.a,.b min = ',hmina,hminb,hmina-hminb,
+     &    '.a,.b max = ',hmaxa,hmaxb,hmaxa-hmaxb
+        endif !1st tile
+        call xcstop('(hf_readclm)')
+               stop '(hf_readclm)'
+      endif
+      call zaiocl(333)
+      if (mnproc==1) close(333+uoff)
+      end subroutine
+c
+c
+      subroutine inline_diag(prefix,dtime,slot)
+      use mod_hycom_nersc
+      use netcdf
+      implicit none
+      characteR(len=*), intent(in) :: prefix
+      real*8 , intent(in) :: dtime
+      integer, intent(in) :: slot
+      character(len=80) :: ncfil
+      integer :: iyear, iday, ihour
+      real    ,dimension(itdm,jtdm) :: gfld
+      include 'common_blocks.h'
+c
+      call forday(dtime, yrflag, iyear,iday,ihour)
+      write(ncfil,'(a,i4.4,"_",i3.3,"_",i2.2,".nc")') 
+     &      prefix,iyear,iday,ihour
+c   
+      call xcaget(gfld,depths,0)
+      call ncdraft(ncfil,gfld,'depths','clobber')
+c   
+      call xcaget(gfld,plon,0)
+      call ncdraft(ncfil,gfld,'plon','')
+c   
+      call xcaget(gfld,plat,0)
+      call ncdraft(ncfil,gfld,'plat','')
+c   
+      call xcaget(gfld,airtmp(1-nbdy,1-nbdy,slot),0)
+      call ncdraft(ncfil,gfld,'airtmp','')
+c
+      call xcaget(gfld,relhum(1-nbdy,1-nbdy,slot),0)
+      call ncdraft(ncfil,gfld,'relhum','')
+c
+      call xcaget(gfld,vapmix(1-nbdy,1-nbdy,slot),0)
+      call ncdraft(ncfil,gfld,'vapmix','')
+c
+      call xcaget(gfld,clouds(1-nbdy,1-nbdy,slot),0)
+      call ncdraft(ncfil,gfld,'clouds','')
+c
+      call xcaget(gfld,slp(1-nbdy,1-nbdy,slot),0)
+      call ncdraft(ncfil,gfld,'slp','')
+c
+      call xcaget(gfld,vwind(1-nbdy,1-nbdy,slot),0)
+      call ncdraft(ncfil,gfld,'vwind','')
+c
+      call xcaget(gfld,uwind(1-nbdy,1-nbdy,slot),0)
+      call ncdraft(ncfil,gfld,'uwind','')
+c
+      call xcaget(gfld,wndspd(1-nbdy,1-nbdy,slot),0)
+      call ncdraft(ncfil,gfld,'wndspd','')
+c
+      call xcaget(gfld,taux(1-nbdy,1-nbdy,slot),0)
+      call ncdraft(ncfil,gfld,'taux','')
+c
+      call xcaget(gfld,tauy(1-nbdy,1-nbdy,slot),0)
+      call ncdraft(ncfil,gfld,'tauy','')
+c
+      call xcaget(gfld,precip(1-nbdy,1-nbdy,slot),0)
+      call ncdraft(ncfil,gfld,'precip','')
+      end subroutine
+c
+#endif /* FORCING_INLINE */
+c
+c --- convert relative humidity to vapor mixing ratio
+      real function rhtovpmix(relhum,t,slp)
+      implicit none
+      real, intent(in) :: relhum ! relative humidity (range 0-1)
+      real, intent(in) :: t      ! air temperature [K]
+      real, intent(in) :: slp    ! sea level pressure [Pa]
+      rhtovpmix = relhum*satvap(t)/slp
+      end function
+c
+c
+c --- This function calculates the saturation vapour pressure
+c --- [Pa] from the temperature [deg K].
+c --- Modified: Anita Jacob, June '97
+c --- Input: t: temperature [deg K]
+c --- Output: satvap: saturation vapour pressure at temp. t
+c --- es(T) = C1 * exp(C3*(T - T0)/(T - C4)) from ECMWF manual
+      real function satvap(t)
+      implicit none
+      real, intent(in):: t
+      real :: aa,bb,c1,c3,c4,t00,cc
+      data c1/610.78/,t00/273.16/
+c
+      if (t < t00) then
+         c3 = 21.875
+         c4 = 7.66
+      else
+         c3 = 17.269
+         c4 = 35.86
+      endif
+c
+      aa = c3 * (t - t00)
+      bb = t - c4
+      cc=aa/bb
+      if (cc < -20.0) then
+         satvap=0.0
+      else
+         satvap = c1 * exp(aa/bb)
+      endif
+      end function satvap
+c
+c
+      real function relhumid(sva,svd,msl)
+c --- This routine calculates the relative humidity by the 
+c --- dew point temperature and the mean sea level pressure.
+c --- Modified: Anita Jacob, June '97
+c
+c --- Input: sva: saturatn vapour press at air temp [K]
+c --- svd: saturatn vapour press at dew pt temp [K]
+c --- msl: pressure at mean sea level [Pa]
+c --- Output: relhumid: Relative Humidity
+c
+c --- We use the Tetens formula:
+c --- es(T) = C1 * exp(C3*(T - T0)/(T - C4)) from ECMWF manual
+c ---              es(Tdew)        p - es(Tair)
+c --- RH = 100 *  -----------   *  ------------
+c ---             p - es(tdew)       es(Tair)
+      implicit none
+      real, intent(in):: sva
+      real, intent(in):: svd
+      real, intent(in):: msl
+      real :: aaa,bbb
+      aaa=msl - svd
+      aaa = svd/aaa
+      bbb = (msl - sva)/sva
+      relhumid = 100. * aaa * bbb
+      end function relhumid
+c
+c
+c
+c --- Routines checks error value of netcdf operation. Exits
+c --- if an error occured
+      subroutine ncerr(errcode)
+      use mod_xc 
+      use netcdf
+      implicit none
+      integer, intent(in) :: errcode
+      integer :: errcode2
+      real a(1)
+      a(1)=errcode
+      call xcastr(a,1)
+      errcode2=int(a(1))
+      if (errcode2/=NF90_NOERR) then
+         if (mnproc==1) then
+            write(lp,'(a)') NF90_STRERROR(errcode2)
+            print *,errcode2
+         end if
+         stop '(ncerr)'
+         call xcstop('(ncerr)')
+      end if
+      end subroutine
+
+c --- "interpglob" - interpolation routine for global data sets
+c --- periodic in longitude. Interpolates data from data grid (old) to 
+c --- input grid (ne) with positions specified by newlon, newlat
+c --- Interpolation methods:
+c --- itype == 0 : bilinear interpolation. Continous, but discontinuous
+c --- 1st derivatives. Always monotonic
+c
+c --- itype == 2 : bicubic interpolation. Continous 0-th and 1st order 
+c --- derivatives. 2nd order cross derivative continous at corners
+      subroutine interpglob(old,onx,ony,olonref,olatref,odlon,odlat,
+     &                      new,newlon,newlat,itype)   
+      use mod_xc
+      implicit none
+c --- Dims of old (data) grid, as well as reference lon/lat and grid increment
+      integer, intent(in) :: onx, ony,itype 
+      real, intent(in)    :: olonref, olatref    
+      real, intent(in)    :: odlon  , odlat
+      real, intent(in)    :: old(onx,ony)! old grid
+c --- Longitude/Latitude of new grid, as well as new (interpolated) values
+      real, intent(in), dimension (1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy) ::
+     &   newlon, newlat
+      real, intent(out)   :: new   (1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy)  
+c
+      integer i,j,ipos,jpos,ia,ib,ja,jb,ib2,jb2,maxlati,minlati,numerr
+      real    aa,bb,maxlat,lon,minlat,rnumerr, newlon2
+      real :: f00,f10,f01,f11,fx00,fx10,fx01,fx11,fy00,fy10,fy01,fy11,
+     &        fxy00,fxy10,fxy01,fxy11, a1,a2,a3,a4
+      real :: rhs(16), coeffs(16)
+c
+c
+c --- Set "minimumlat" and "maximumlat" index..
+      maxlat=olatref+(ony-1)*odlat
+      maxlat=max(olatref,maxlat) ; ! For odlat<0
+      minlat=olatref+(ony-1)*odlat
+      minlat=min(minlat,olatref)   ! For odlat<0
+      if (olatref<olatref+(ony-1)*odlat) then
+         minlati=1
+         maxlati=ony
+      else
+         minlati=ony
+         maxlati=1
+      end if
+c
+c --- Start interpolation
+      numerr=0
+CC$OMP PARALLEL DO PRIVATE(i,j,ipos,jpos,jb,lon,ib, newlon2,
+Cc&OMP& ia,ja, ib2, jb2, f00,f10,f01,f11,fx00,fx10,fx01,fx11,
+Cc&OMP& fy00,fy10,fy01,fy11,fxy00,fxy10,fxy01,fxy11,
+Cc&OMP& a1,a2,a3,a4,rhs,coeffs)
+CC$OMP&SHARED (lerr) SCHEDULE(STATIC,jblk) REDUCTION(+:numerr)
+      do j=1-nbdy,jdm+nbdy
+      do i=1-nbdy,idm+nbdy
+c ---    New index in old data. New point is between
+c ---    ipos, ib and jpos, jb
+         newlon2 = mod(newlon(i,j)+360.d0,360.d0)
+         ipos =int((newlon2-olonref)/odlon+1.0d0)
+         ia =mod(onx+ipos-2,onx)+1    ! Periodic
+         ib =mod(ipos,onx)+1          ! Periodic
+         ib2=mod(ib  ,onx)+1          ! Periodic
+         lon=olonref+(ipos-1)*odlon
+c
+         jpos =int((newlat(i,j)-olatref)/odlat+1.0d0)
+         if (jpos>ony .or. jpos < 1 ) then
+            write(lp,'(a,2i5,2f10.2)') 'jpos error ',
+     &         jpos,ony,newlat(i,j),olatref+odlat*(ony-1)
+            numerr=numerr+1
+         endif
+         jpos =min(max(1,jpos  ),ony)
+         ja   =min(max(1,jpos-1),ony)
+         jb   =min(max(1,jpos+1),ony)
+         jb2  =min(max(1,jpos+2),ony)
+C        if (j+j0==250) print '(a,5i4)','i',i,ia,ipos,ib,ib2
+c
+c ---    Grid distance new point -> ipos, jpos
+         aa=(newlon2 - olonref-float(ipos-1)*odlon)/odlon
+         bb=(newlat(i,j) - olatref-float(jpos-1)*odlat)/odlat
+c
+c ---    Catch errors - but dont stop until after loop
+         if ((aa > 1.0).or.(aa < 0.0)) then
+            !write(*,'(3i5,3f10.2)')i,j,ipos,lon,newlon(i,j),lon+odlon
+            write(*,'(3i5,3f10.2)')i,j,ipos,lon,newlon2,lon+odlon
+            print *,'bilin_ecmwf2: invalid aa',aa
+            numerr=numerr+1
+         endif
+         if ((bb > 1.0).or.(bb < 0.0)) then
+            print *,'bilin_ecmwf2: invalid bb',bb
+            numerr=numerr+1
+         endif
+c
+c ---   Set up bilinear weights
+        if (itype==0) then
+c ---      Bilinear weights
+           a1=(1.0-aa)*(1.0-bb)
+           a2=aa*(1.0-bb)
+           a3=aa*bb
+           a4=(1.0-aa)*bb
+c ---      New data value
+           new(i,j) = a1*old(ipos,jpos)+a2*old(ib  ,jpos)+
+     &                a3*old(ib  ,jb  )+a4*old(ipos,jb  ) 
+c ---   TODO: most of this can be re-used if (ipos,jpos) hasnt changed
+c ---   Set up function and derivatives at ecmwf nodes
+        elseif (itype==1) then
+          f00  =old(ipos,jpos)
+          f10  =old(ib  ,jpos)
+          f01  =old(ipos,jb  )
+          f11  =old(ib  ,jb  )
+c ---     X derivative with gridspacing 1 - TODO: modify with latitude
+          fx00 = 0.5*(old(ib  ,jpos) - old(ia  ,jpos))/odlon
+          fx10 = 0.5*(old(ib2 ,jpos) - old(ipos,jpos))/odlon
+          fx01 = 0.5*(old(ib  ,jb  ) - old(ia  ,jb  ))/odlon
+          fx11 = 0.5*(old(ib2 ,jb  ) - old(ipos,jb  ))/odlon
+c ---     Y derivative with gridspacing 1 
+          fy00 = 0.5*(old(ipos,jb  ) - old(ipos,ja  ))/odlat
+          fy10 = 0.5*(old(ib  ,jb  ) - old(ib  ,ja  ))/odlat
+          fy01 = 0.5*(old(ipos,jb2 ) - old(ipos,jpos))/odlat
+          fy11 = 0.5*(old(ib  ,jb2 ) - old(ib  ,jpos))/odlat
+c ---     Cross derivative with gridspacing 1  - TODO: modify with latitude
+          fxy00=0.25*( old(ib ,jb )-old(ib ,ja  )-
+     &                (old(ia  ,jb )-old(ia  ,ja  )))/(odlon*odlat)
+          fxy10=0.25*( old(ib2,jb )-old(ib2,ja  )-
+     &                (old(ipos,jb )-old(ipos,ja  )))/(odlon*odlat)
+          fxy01=0.25*( old(ib ,jb2)-old(ib ,jpos)-
+     &                (old(ia  ,jb2)-old(ia  ,jpos)))/(odlon*odlat)
+          fxy11=0.25*( old(ib2,jb2)-old(ib2,jpos)-
+     &                (old(ipos,jb2)-old(ipos,jpos)))/(odlon*odlat)
+          rhs=(/f00,f10,f01,f11,fx00,fx10,fx01,fx11,fy00,fy10,fy01,fy11,
+     &        fxy00,fxy10,fxy01,fxy11/)
+c ---     Solve matrix for cubic coeffs
+          coeffs=cubiccoeff(rhs)
+c ---     Calculate solution
+          new(i,j)=cubicsol(coeffs,aa,bb)
+        end if
+      end do
+      end do
+      rnumerr=numerr ;call xcmaxr(rnumerr); numerr=int(rnumerr)
+      if (numerr>0) then
+         if (mnproc==1) then
+            write(lp,'(a)') 'Error(s) occured in interpglob..'
+            call flush(lp)
+         end if
+         call xcstop('(interpglob)')
+         stop '(interpglob)'
+      end if
+      end subroutine interpglob
+
+
+
+
+
+c
+c --- Routine calculates bilinear weights for interpolation of field
+c --- "old" to "new" locations. Also does the interpolation. A Periodic
+c --- "old" grid is assumed
+c
+      subroutine bilin_ecmwf2(old,onx,ony,olonref,olatref,odlon,odlat,
+     &                       new,newlon,newlat)   
+      use mod_xc
+      implicit none
+      integer, intent(in) :: onx         ! x-dimension of old field
+      integer, intent(in) :: ony         ! y-dimension of old field
+      real, intent(in)    :: old(onx,ony)! old grid
+      real, intent(in)    :: olonref     ! Lon - reference point
+      real, intent(in)    :: olatref     ! Lat - reference point
+      real, intent(in)    :: odlon       ! Lon - grid spacing in old grid
+      real, intent(in)    :: odlat       ! Lat - grid spacing in old grid
+c
+      real, intent(out)   :: new   (1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy)  ! New interpolated field
+      real, intent(in)    :: newlon(1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy) ! Longitudes for new grid
+      real, intent(in)    :: newlat(1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy) ! Latitudes for new grid
+c
+      integer i,j,ia,ib,ja,jb,ifalse,maxlati,minlati, numerr
+      integer ipos    !  index of i-pivot grid point in old grid
+      integer jpos    !  index of j-pivot grid point in old grid
+      real    aa,bb,a1,a2,a3,a4,maxlat,lon,minlat,rnumerr, newlon2
+c
+      maxlat=olatref+(ony-1)*odlat
+      maxlat=max(olatref,maxlat) ; ! For odlat<0
+      minlat=olatref+(ony-1)*odlat
+      minlat=min(minlat,olatref)   ! For odlat<0
+c
+c --- Set "minimumlat" and "maximumlat" index..
+      if (olatref<olatref+(ony-1)*odlat) then
+         minlati=1
+         maxlati=ony
+      else
+         minlati=ony
+         maxlati=1
+      end if
+c
+c
+c --- Start interpolation
+      numerr=0
+C$OMP PARALLEL DO PRIVATE(i,j,ipos,jpos,jb,lon,ib, newlon2,
+c&OMP&                    aa,bb,a1,a2,a3,a4) 
+C$OMP&SHARED (lerr) SCHEDULE(STATIC,jblk) REDUCTION(+:numerr)
+      do j=1-nbdy,jdm+nbdy
+      do i=1-nbdy,idm+nbdy
+c ---    New index in old data. New point is between
+c ---    ipos, ipos+1 and jpos, jpos+1
+         newlon2 = mod(newlon(i,j)+360.d0,360.d0)
+         !ipos =int((newlon(i,j)-olonref)/odlon+1.0)
+         ipos =int((newlon2-olonref)/odlon+1.0d0)
+         ib=mod(ipos,onx)+1          ! Periodic
+         lon=olonref+(ipos-1)*odlon
+         !print *,newlon(i,j),newlon2
+c
+         jpos =int((newlat(i,j)-olatref)/odlat+1.0d0)
+         if (jpos>ony .or. jpos < 1 ) then
+            write(lp,'(a,2i5,2f10.2)') 'jpos error ',
+     &         jpos,ony,newlat(i,j),olatref+odlat*(ony-1)
+            numerr=numerr+1
+         endif
+         jpos =min(max(1,jpos  ),ony)
+         jb   =min(max(1,jpos+1),ony)
+         !if (j+j0==250) print *,i,ipos,ib,jpos,newlon2
+c
+c ---    Grid distance new point -> ipos, jpos
+         aa=(newlon2 - olonref-float(ipos-1)*odlon)/odlon
+         bb=(newlat(i,j) - olatref-float(jpos-1)*odlat)/odlat
+c
+c ---    Catch errors - but dont stop until after loop
+         if ((aa > 1.0).or.(aa < 0.0)) then
+            !write(*,'(3i5,3f10.2)')i,j,ipos,lon,newlon(i,j),lon+odlon
+            write(*,'(3i5,3f10.2)')i,j,ipos,lon,newlon2,lon+odlon
+            print *,'bilin_ecmwf2: invalid aa',aa
+            numerr=numerr+1
+         endif
+         if ((bb > 1.0).or.(bb < 0.0)) then
+            print *,'bilin_ecmwf2: invalid bb',bb
+            numerr=numerr+1
+         endif
+
+c ---    Bilinear weights
+         a1=(1.0-aa)*(1.0-bb)
+         a2=aa*(1.0-bb)
+         a3=aa*bb
+         a4=(1.0-aa)*bb
+c ---    New data value
+         new(i,j) = a1*old(ipos,jpos)+a2*old(ib  ,jpos)+
+     &              a3*old(ib  ,jb  )+a4*old(ipos,jb  ) 
+      enddo
+      enddo
+C$OMP END PARALLEL DO
+      rnumerr=numerr
+      call xcmaxr_0o(rnumerr)
+      numerr=int(rnumerr)
+
+      if (numerr>0) then
+         if (mnproc==1) then
+            write(lp,'(a)') 'Error(s) occured in bilin_ecmwf2..'
+            call flush(lp)
+         end if
+         call xcstop('(bilin_ecmwf2)')
+         stop '(bilin_ecmwf2)'
+      end if
+      end subroutine bilin_ecmwf2
+c
+      subroutine bicubic(old,onx,ony,olonref,olatref,odlon,odlat,
+     &                       new,newlon,newlat)   
+      use mod_xc
+      implicit none
+      integer, intent(in) :: onx         ! x-dimension of old field
+      integer, intent(in) :: ony         ! y-dimension of old field
+      real, intent(in)    :: old(onx,ony)! old grid
+      real, intent(in)    :: olonref     ! Lon - reference point
+      real, intent(in)    :: olatref     ! Lat - reference point
+      real, intent(in)    :: odlon       ! Lon - grid spacing in old grid
+      real, intent(in)    :: odlat       ! Lat - grid spacing in old grid
+c
+      real, intent(out)   :: new   (1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy)  ! New interpolated field
+      real, intent(in)    :: newlon(1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy) ! Longitudes for new grid
+      real, intent(in)    :: newlat(1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy) ! Latitudes for new grid
+c
+      integer i,j,ia,ib,ja,jb, ib2, jb2
+      integer :: maxlati,minlati, numerr
+      integer ipos    !  index of i-pivot grid point in old grid
+      integer jpos    !  index of j-pivot grid point in old grid
+      real    aa,bb,maxlat,lon,minlat,rnumerr, newlon2
+      real :: f00,f10,f01,f11,fx00,fx10,fx01,fx11,fy00,fy10,fy01,fy11,
+     &        fxy00,fxy10,fxy01,fxy11
+      real :: rhs(16), coeffs(16)
+c
+      maxlat=olatref+(ony-1)*odlat
+      maxlat=max(olatref,maxlat) ; ! For odlat<0
+      minlat=olatref+(ony-1)*odlat
+      minlat=min(minlat,olatref)   ! For odlat<0
+
+      !call xcstop ('(bicubic needs more testing )')     
+
+c
+c --- Set "minimumlat" and "maximumlat" index..
+      if (olatref<olatref+(ony-1)*odlat) then
+         minlati=1
+         maxlati=ony
+      else
+         minlati=ony
+         maxlati=1
+      end if
+c
+c
+c --- Start interpolation
+      numerr=0
+CC$OMP PARALLEL DO PRIVATE(i,j,ipos,jpos,jb,lon,ib, newlon2,
+Cc&OMP& ia,ja, ib2, jb2, f00,f10,f01,f11,fx00,fx10,fx01,fx11,
+Cc&OMP& fy00,fy10,fy01,fy11,fxy00,fxy10,fxy01,fxy11,
+Cc&OMP& rhs,coeffs)
+CC$OMP&SHARED (lerr) SCHEDULE(STATIC,jblk) REDUCTION(+:numerr)
+      do j=1-nbdy,jdm+nbdy
+      do i=1-nbdy,idm+nbdy
+c ---    New index in old data. New point is between
+c ---    ipos, ipos+1 and jpos, jpos+1
+         newlon2 = mod(newlon(i,j)+360.d0,360.d0)
+         ipos =int((newlon2-olonref)/odlon+1.0d0)
+         ia =mod(onx+ipos-2,onx)+1          ! Periodic
+         ib =mod(ipos,onx)+1          ! Periodic
+         ib2=mod(ib  ,onx)+1          ! Periodic
+         lon=olonref+(ipos-1)*odlon
+c
+         jpos =int((newlat(i,j)-olatref)/odlat+1.0d0)
+         if (jpos>ony .or. jpos < 1 ) then
+            write(lp,'(a,2i5,2f10.2)') 'jpos error ',
+     &         jpos,ony,newlat(i,j),olatref+odlat*(ony-1)
+            numerr=numerr+1
+         endif
+         jpos =min(max(1,jpos  ),ony)
+         ja   =min(max(1,jpos-1),ony)
+         jb   =min(max(1,jpos+1),ony)
+         jb2  =min(max(1,jpos+2),ony)
+         if (j+j0==250) print '(a,5i4)','i',i,ia,ipos,ib,ib2
+
+c
+c ---    Grid distance new point -> ipos, jpos
+         aa=(newlon2 - olonref-float(ipos-1)*odlon)/odlon
+         bb=(newlat(i,j) - olatref-float(jpos-1)*odlat)/odlat
+c
+c ---    Catch errors - but dont stop until after loop
+         if ((aa > 1.0).or.(aa < 0.0)) then
+            !write(*,'(3i5,3f10.2)')i,j,ipos,lon,newlon(i,j),lon+odlon
+            write(*,'(3i5,3f10.2)')i,j,ipos,lon,newlon2,lon+odlon
+            print *,'bilin_ecmwf2: invalid aa',aa
+            numerr=numerr+1
+         endif
+         if ((bb > 1.0).or.(bb < 0.0)) then
+            print *,'bilin_ecmwf2: invalid bb',bb
+            numerr=numerr+1
+         endif
+c ---   TODO: most of this can be re-used if (ipos,jpos) hasnt changed
+c ---   Set up function and derivatives at ecmwf nodes
+        f00  =old(ipos,jpos)
+        f10  =old(ib  ,jpos)
+        f01  =old(ipos,jb  )
+        f11  =old(ib  ,jb  )
+c ---   X derivative with gridspacing 1 - TODO: modify with latitude
+        fx00 = 0.5*(old(ib  ,jpos) - old(ia  ,jpos))/odlon
+        fx10 = 0.5*(old(ib2 ,jpos) - old(ipos,jpos))/odlon
+        fx01 = 0.5*(old(ib  ,jb  ) - old(ia  ,jb  ))/odlon
+        fx11 = 0.5*(old(ib2 ,jb  ) - old(ipos,jb  ))/odlon
+c ---   Y derivative with gridspacing 1 
+        fy00 = 0.5*(old(ipos,jb  ) - old(ipos,ja  ))/odlat
+        fy10 = 0.5*(old(ib  ,jb  ) - old(ib  ,ja  ))/odlat
+        fy01 = 0.5*(old(ipos,jb2 ) - old(ipos,jpos))/odlat
+        fy11 = 0.5*(old(ib  ,jb2 ) - old(ib  ,jpos))/odlat
+c ---   Cross derivative with gridspacing 1  - TODO: modify with latitude
+        fxy00=0.25*(
+     &        old(ib ,jb )-old(ib ,ja  )-(old(ia  ,jb )-old(ia  ,ja  ))
+     &        )/(odlon*odlat)
+        fxy10=0.25*(
+     &        old(ib2,jb )-old(ib2,ja  )-(old(ipos,jb )-old(ipos,ja  ))
+     &        )/(odlon*odlat)
+        fxy01=0.25*(
+     &        old(ib ,jb2)-old(ib ,jpos)-(old(ia  ,jb2)-old(ia  ,jpos))
+     &        )/(odlon*odlat)
+        fxy11=0.25*(
+     &        old(ib2,jb2)-old(ib2,jpos)-(old(ipos,jb2)-old(ipos,jpos))
+     &        )/(odlon*odlat)
+c ---   Testing
+c       fx00 =0.
+c       fx10 =0.
+c       fx01 =0.
+c       fx11 =0.
+c       fy00 =0.
+c       fy10 =0.
+c       fy01 =0.
+c       fy11 =0.
+c       fxy00=0.
+c       fxy10=0.
+c       fxy01=0.
+c       fxy11=0.
+c ---   Form rhs
+        rhs=(/f00,f10,f01,f11,fx00,fx10,fx01,fx11,fy00,fy10,fy01,fy11,
+     &        fxy00,fxy10,fxy01,fxy11/)
+c ---   Solve matrix for cubic coeffs
+        coeffs=cubiccoeff(rhs)
+c ---   Calculate solution
+        new(i,j)=cubicsol(coeffs,aa,bb)
+      enddo
+      enddo
+C$OMP END PARALLEL DO
+      rnumerr=numerr
+      call xcmaxr_0o(rnumerr)
+      numerr=int(rnumerr)
+      !call xcstop('bicubic')
+
+      if (numerr>0) then
+         if (mnproc==1) then
+            write(lp,'(a)') 'Error(s) occured in bicubic..'
+            call flush(lp)
+         end if
+         call xcstop('(bicubic)')
+         stop '(bicubic)'
+      end if
+      end subroutine bicubic
+
+      function cubiccoeff(rhs)
+      implicit  none
+      real, dimension(16), intent(in) :: rhs
+      real, dimension(16) :: cubiccoeff
+C     real, dimension(16*16), parameter ::
+C    & invcb=(/1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+C    &         0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+C    &        -3, 3, 0, 0,-2,-1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+C    &         2,-2, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+C    &         0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0,
+C    &         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0,
+C    &         0, 0, 0, 0, 0, 0, 0, 0,-3, 3, 0, 0,-2,-1, 0, 0,
+C    &         0, 0, 0, 0, 0, 0, 0, 0, 2,-2, 0, 0, 1, 1, 0, 0,
+C    &        -3, 0, 3, 0, 0, 0, 0, 0,-2, 0,-1, 0, 0, 0, 0, 0,
+C    &         0, 0, 0, 0,-3, 0, 3, 0, 0, 0, 0, 0,-2, 0,-1, 0,
+C    &         9,-9,-9, 9, 6, 3,-6,-3, 6,-6, 3,-3, 4, 2, 2, 1,
+C    &        -6, 6, 6,-6,-3,-3, 3, 3,-4, 4,-2, 2,-2,-2,-1,-1,
+C    &         2, 0,-2, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0,
+C    &         0, 0, 0, 0, 2, 0,-2, 0, 0, 0, 0, 0, 1, 0, 1, 0,
+C    &        -6, 6, 6,-6,-4,-2, 4, 2,-3, 3,-3, 3,-2,-1,-2,-1,
+C    &         4,-4,-4, 4, 2, 2,-2,-2, 2,-2, 2,-2, 1, 1, 1, 1/)
+C     real, dimension(16,16),parameter:: invcb2=transpose(reshape(invcb,(/16,16/)))
+c --- invcb2 = reshape(invcb,(/16,16/)) TODO - fix this
+      !invcb2 = transpose(reshape(invcb,(/16,16/)))
+c 
+C --- Matrix is sparse - so there is room for reducing the number
+c --- of operations (i.e avoid matmul)
+      real, dimension(16*16), parameter ::
+     &invcb=(/ 1, 0,-3, 2, 0, 0, 0, 0,-3, 0, 9,-6, 2, 0,-6, 4,
+     &         0, 0, 3,-2, 0, 0, 0, 0, 0, 0,-9, 6, 0, 0, 6,-4,
+     &         0, 0, 0, 0, 0, 0, 0, 0, 3, 0,-9, 6,-2, 0, 6,-4,
+     &         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9,-6, 0, 0,-6, 4,
+     &         0, 1,-2, 1, 0, 0, 0, 0, 0,-3, 6,-3, 0, 2,-4, 2,
+     &         0, 0,-1, 1, 0, 0, 0, 0, 0, 0, 3,-3, 0, 0,-2, 2,
+     &         0, 0, 0, 0, 0, 0, 0, 0, 0, 3,-6, 3, 0,-2, 4,-2,
+     &         0, 0, 0, 0, 0, 0, 0, 0, 0, 0,-3, 3, 0, 0, 2,-2,
+     &         0, 0, 0, 0, 1, 0,-3, 2,-2, 0, 6,-4, 1, 0,-3, 2,
+     &         0, 0, 0, 0, 0, 0, 3,-2, 0, 0,-6, 4, 0, 0, 3,-2,
+     &         0, 0, 0, 0, 0, 0, 0, 0,-1, 0, 3,-2, 1, 0,-3, 2,
+     &         0, 0, 0, 0, 0, 0, 0, 0, 0, 0,-3, 2, 0, 0, 3,-2,
+     &         0, 0, 0, 0, 0, 1,-2, 1, 0,-2, 4,-2, 0, 1,-2, 1,
+     &         0, 0, 0, 0, 0, 0,-1, 1, 0, 0, 2,-2, 0, 0,-1, 1,
+     &         0, 0, 0, 0, 0, 0, 0, 0, 0,-1, 2,-1, 0, 1,-2, 1,
+     &         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,-1, 0, 0,-1, 1/)
+      real,parameter,dimension(16,16):: invcb2=reshape(invcb,(/16,16/))  
+      cubiccoeff=matmul(invcb2,rhs)
+      end function
+
+      real function cubicsol(coeffs,aa,bb)
+      implicit none
+      real, intent(in) :: aa,bb,coeffs(16)
+      real :: coeffs2(4,4)
+      integer :: i,j
+
+      coeffs2=reshape(coeffs,(/4,4/))
+      cubicsol=0.
+      do j=1,4
+      do i=1,4
+c ---    Double check indices
+         cubicsol=cubicsol+coeffs2(i,j)*aa**(i-1)*bb**(j-1)
+      end do
+      end do
+      end function cubicsol
+
+
+c
+c
+      subroutine era40_fix(vname,fld,nlon,nlat,flon,flat,dlon,dlat)
+      use mod_xc
+      implicit none
+c
+      character(len=*), intent(in)    :: vname
+      real            , intent(in)    :: flon,flat,dlon,dlat
+      integer         , intent(in)    :: nlon,nlat
+      real            , intent(inout) :: fld(nlon,nlat)
+c
+c --- Variable names - ERA40 1.125 by 1.125 
+      character(len=*), parameter :: vprec='TP'
+c
+      real :: latera40, weight,wrad,wrad2
+      integer :: i,j
+c
+      if (vname==vprec) then
+c ---    ERA40 precipitation is biased in the tropics (See Biasotti et al., J.Clim)
+c ---    bias is approx 50 % so real precip is ~ 2/3 of precip fields
+c ---    This puts a latitudinal weighting on precipitation, centered on the
+c ---    mean ITCZ-position (~5 degrees N). TODO: Adjust to seasonal ITCZ
+c ---    position
+         do j=1,nlat
+            latera40=flat+(j-1)*dlat
+c
+            ! Weight=1 at 5N, 0 at 30N, 25S
+            weight=abs(latera40-5.)
+            wrad=20. ! 0-weight distance from 5N
+            wrad2=10. ! region around 5N where weight=1
+            if (weight<wrad2) then
+               weight=1.
+            else if (weight<wrad) then
+               weight=.5+.5*cos((weight-wrad2)*3.14156/(wrad-wrad2))
+            else 
+               weight=0.
+            end if
+c
+            do i=1,nlon
+               fld(i,j)=fld(i,j)*(1. - weight*0.33)
+            end do
+         end do
+      else
+         if (mnproc==1) print *,'No ERA40 fix for variable '//vname
+         call xcstop('(era40_fix)')
+         stop '(era40_fix)'
+      end if
+c
+      END subroutine era40_fix
+c
+      real function cd_lp81(wspd)
+c --- define WINDDRAG results in the use of a winddependent winddrag.
+c --- compute air-water wind stresses  tau_x  and  tau_y  from the surface wind
+c --- components. surface wind components have dim [m/s], and are defined on a
+c --- c-grid;  airdns  has dim [kg/m^3], and  cd  is dimensionless.
+c --- tau_x  and  tau_y  have dim [kg/(m s^2) = N/m^2]
+c ---
+c --- include wind dependent drag coefficient according to
+c --- large & pond, jpo, 11, 324-336, 1981
+c ---
+c ---   10^3 cd = 1.2             for winds < 11 m/s
+c ---           = .49+0.065*wnd   for winds > 11 m/s
+      implicit none
+      real, intent(in) :: wspd
+      real :: wndfac
+      wndfac=(1.+sign(1.,wspd-11.))*.5
+      cd_lp81=(0.49+0.065*wspd)*1.0e-3*wndfac+cd*(1.-wndfac)
+      end function
+c
+c --- Helper routine for reading fields from netcdf forcing
+c --- all processes call this
+      subroutine rdncrec(ncfil,vname,fld,nx,ny,irec)
+      use netcdf
+      integer         ,intent(in) :: nx,ny,irec
+      character(len=*),intent(in) :: ncfil, vname
+      real  , dimension(nx,ny), intent(out) :: fld
+      real*4, dimension(nx*ny) :: bcvec
+      integer :: ierr
+c
+      ierr=0
+c --- one cpu only
+      if (mnproc==1) ierr=rdncrec_1(ncfil,vname,fld, nx,ny,irec)
+      call ncerr(ierr)
+c --- broadcast results to all cpus. This operation is
+c --- probably costly for large grids. Other options should be
+c --- considered
+      if (mnproc==1) bcvec=reshape(fld,(/nx*ny/))
+      call xcastr4(bcvec,1)  ! New - r*4 version of hycom xcastr
+      fld=reshape(bcvec,(/nx,ny/))
+      end subroutine
+c
+c
+c --- Helper routine for reading fields from netcdf forcing
+c --- one process only
+      integer function rdncrec_1(ncfil,vname,fld,nx,ny,irec)
+      use netcdf
+      implicit none
+      integer         ,intent(in) :: nx,ny,irec
+      character(len=*),intent(in) :: ncfil, vname
+      real, dimension(nx,ny), intent(out) :: fld
+      integer :: varid,ncid
+      rdncrec_1=NF90_open(trim(ncfil),NF90_NOCLOBBER,ncid)
+      if (rdncrec_1/=NF90_NOERR)  return
+      rdncrec_1=nf90_inq_varid(ncid, vname, varid)
+      if (rdncrec_1/=NF90_NOERR)  return
+      rdncrec_1=nf90_get_var  (ncid, varid, fld,start=(/1,1,irec/))
+      if (rdncrec_1/=NF90_NOERR)  return
+      rdncrec_1=nf90_close    (ncid)
+      if (rdncrec_1/=NF90_NOERR)  return
+      end function
+      end module mod_forcing_nersc

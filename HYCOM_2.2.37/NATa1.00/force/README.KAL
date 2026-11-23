@@ -1,0 +1,42 @@
+bin contains various scripts to create atmospheric forcing climatologies for hycom - used for 
+calculating surface thermal balance and atmospheric stress input to the ocean. Also 
+river forcing routines and routines for creating kpar (watertype) maps (seawifs).
+
+Run these routins after you have created topography, blkdat.input - and in some cases after
+you have created the relaxation fields (nersc_clim.sh with "old" climatology option)
+
+Most routines doesnt depend on topography, except for river routines.
+
+
+
+Procedure :
+--------------------------------------------------------------------------------------------
+nersc_clim.sh      - Routines for creating wind and atmospheric climatology from various data -
+                     based on offline forfun_nersc version and requires file "infile.in" in
+                     main experiment dir. 
+
+nersc_synpotic.sh  - Routines for creating wind and atmospheric forcing from various data sets. 
+                     This is typically used to create synoptic forcing fields, pre-processed for 
+                     use in a HYCOM run.
+
+seawifs_mon_kpar.sh- Create kpar (water quality) climatology - based on seawifs data. 
+
+tauXwd_zero.sh     - Creates a "zero offset" tau file in offset. Offset files can be used
+                     to correct for model biases - not tested.
+
+nersc_rivers.sh    - Create a river forcing file, based on nersc routine "rivers". 
+                     Requirs a file "rivers.dat" to be present in the main experiment directory.
+                     Input is experiment, and two radii giving normal and alongshore length scales
+                     for river plumes.
+
+nersc_rivers.sh    - Create a river forcing file, based on ERA40 runoff + TRIP database.
+                     Input is experiment number. May require some validation......
+                     
+
+coads_mon_flux.sh  - Routines for creating climatology from coads data (not finished)
+coads_mon_wind.sh  - Routines for creating wind climatology from coads data (not finished)
+era15_mon_flux.sh  - Routines for creating climatology from era15 data (not finished)
+era15_mon_wind.sh  - Routines for creating wind climatology from era15 data (not finished)
+era15_mon_flux.sh  - Routines for creating climatology from era15 data (not finished)
+
+

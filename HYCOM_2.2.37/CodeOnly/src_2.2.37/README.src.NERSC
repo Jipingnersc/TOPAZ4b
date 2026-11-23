@@ -1,0 +1,6 @@
+KAL - Made local changes to hycom files:
+
+mod_hycom.F  - too many to say - they should be surrounded by NERSC_VERSION cpp flags
+machi_c.c    - Added c calls for mkdir and unlink
+
+nersc contains the majority of the NERSC-specific code

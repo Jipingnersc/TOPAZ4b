@@ -1,0 +1,279 @@
+VPATH = .:RCS:TMP
+
+.SUFFIXES:
+.SUFFIXES: .o .F90 .f90 .F .f .H .h .c
+
+
+#Compiler Options -- serial hands-off version
+#LD = xlf90_r -qspillsize=2152 
+#CF90 = xlf90_r  -qsuffix=f=f90 -qspillsize=2152 -qfree=f90
+#CF77 = xlf90_r -qfixed -qspillsize=2152
+#
+
+
+
+
+#Compiler -- F90
+CF90 = /usr/bin/xlf90_r 
+
+#Compiler -- F77
+CF77 = /usr/bin/xlf90_r 
+
+#Compiler -- C
+CC = /usr/bin/xlc
+
+#Linker 
+LD = /usr/bin/xlf90_r 
+
+#Paralellization opts
+PARO =
+#PARO = -qsmp=omp
+PARO_OE = 
+
+#Size defaults
+SIZEO = -b64 -q64 -qrealsize=8
+
+#Arch opts
+ARCHO= -qarch=auto -qtune=auto -qcache=auto
+
+#Optimalization opts
+#OPTO= -O2 -qstrict
+OPTO= -O3 -qstrict
+# Leave it be.. Something goes wrong in optimizing, 
+# and as long as debugging doesnt quite work on
+# tre, I will stick with this...
+#OPTO= 
+
+#Inlining opts
+#INLO= -Q -qipa
+INLO=
+
+# Diverse options
+DIVO= -qmaxmem=-1 -qnosave
+
+
+
+
+# Flags for debugging -- Note linker halt occurs when using qextchk flag and 
+# passing types as arrays ...
+#DEBUG_FLAGS = -C -qflttrap=underflow:overflow:zerodivide:invalid:enable \
+#	          -qextchk -qinitauto=FF -g
+#DEBUG_FLAGS = -C -qflttrap=underflow:overflow:zerodivide:invalid:enable \
+#-qextchk -qinitauto=FF -qfullpath -g -qsigtrap
+DEBUG_FLAGS=-g -qsigtrap
+
+#F77FLG = -qextname -qfixed                   
+#F90FLG = -qextname -qsuffix=f=f90 -qfree=f90 
+F77FLG = -qfixed                   
+F90FLG = -qsuffix=f=f90 -qfree=f90 
+
+
+CFLAGS    = -q64 
+FFLAGS    = $(SIZEO) $(OPTO) $(ARCHO) $(PARO)    $(INLO) $(DIVO) 
+FFLAGS    = $(SIZEO) $(ARCHO) $(PARO)    $(INLO) $(DIVO) $(DEBUG_FLAGS) -I$(HOME)/include/
+FFLAGSD   = $(SIZEO) $(ARCHO) $(PARO)    $(INLO) $(DIVO) $(DEBUG_FLAGS) 
+
+LINKFLAGS= $(SIZEO) $(OPTO) $(PARO) $(INLO) $(DIVO) 
+
+
+CPPARCH = -DIBM -DAIX
+CPPFLAGS =  -P $(CPPARCH) $(CPPMODEL)
+LIBS = -lessl -L$(HOME)/lib -lnetcdf64 -lm -llapack64 
+
+
+CPP = /usr/lib/cpp
+
+
+# Rules for running cpp and updating files in TMP directory
+.H.h:
+	rm -f ./TMP/$*.h
+	cat MODEL.CPP $*.H | $(CPP) $(CPPFLAGS) | st.sh > ./TMP/$*.h
+
+
+.F90.o:
+	rm -f ./TMP/$*.f90
+	cat MODEL.CPP $*.F90 | $(CPP) $(CPPFLAGS)  | st.sh > ./TMP/$*.f90
+	cd ./TMP ; $(CF90) -c $(FFLAGS) $(F90FLG) -o $*.o $*.f90  
+
+.F.o:
+	rm -f ./TMP/$*.f
+	cat MODEL.CPP $*.F | $(CPP) $(CPPFLAGS) | st.sh > ./TMP/$*.f
+	cd ./TMP ; $(CF77) -c $(FFLAGS) $(F77FLG) -o $*.o $*.f  
+
+# One call to c-routine  (retrieves file size)
+.c.o:
+	rm -f ./TMP/$*.c
+	cat MODEL.CPP $*.c | $(CPP) $(CPPFLAGS)  | st.sh >  ./TMP/$*.c
+	cd ./TMP ; $(CC) -c $(CFLAGS)  -o $*.o $*.c
+
+
+
+
+TARGET1 = rawdaily2netcdf
+TARGET2 = daily2regunc
+TARGET3 = daily2stationnc
+TARGET4 = daily2sectionnc
+TARGET5 = daily2obsstat
+TARGET6 = daily2modstat
+TARGET7 = daily2pak
+TARGET8 = levitus2obs
+TARGET9 = topazwatch
+TARGET10= daily2mosf
+TARGET11= dailymean
+TARGET12= dailyfixname
+TARGET13= dayofweek
+TARGET14= safotoobs
+TARGET15= coriolis2obs
+TARGET16= tide2obs
+TARGET17= innovstat
+
+ 
+# Stay off daily2modstat until dbx bug is resolved
+#all: $(TARGET1) $(TARGET2) $(TARGET3) $(TARGET4) $(TARGET5) $(TARGET6)
+all: $(TARGET1) $(TARGET2) $(TARGET3) $(TARGET4) $(TARGET5) $(TARGET7)  $(TARGET8) $(TARGET9) $(TARGET10)
+
+include source.files
+
+INC2 =$(INC1:.H=.h)
+F90FILES1=$(F90FILES) p_rawdaily2netcdf.F90
+F90FILES2=$(F90FILES) p_daily2regunc.F90
+F90FILES3=$(F90FILES) p_daily2stationnc.F90
+F90FILES4=$(F90FILES) p_daily2sectionnc.F90
+F90FILES5=$(F90FILES) p_daily2obsstat.F90
+F90FILES6=$(F90FILES) p_daily2modstat.F90
+F90FILES9=$(F90FILES) p_topazwatch.F90
+F90FILES10=$(F90FILES) p_daily2mosf.F90
+CFILES=fsize.c machi_c.c
+
+OMOD = $(MODULES:.F90=.o) $(MODULES77:.F=.o)
+OBJECTS1 = $(CFILES:.c=.o) $(F90FILES1:.F90=.o) $(F77FILES:.F=.o)
+OBJECTS2 = $(CFILES:.c=.o) $(F90FILES2:.F90=.o) $(F77FILES:.F=.o) 
+OBJECTS3 = $(F90FILES3:.F90=.o) $(F77FILES:.F=.o)
+OBJECTS4 = $(F90FILES4:.F90=.o) $(F77FILES:.F=.o)
+OBJECTS5 = $(F90FILES5:.F90=.o) $(F77FILES:.F=.o)
+OBJECTS9 = $(F90FILES9:.F90=.o) $(F77FILES:.F=.o)
+OBJECTS10= $(F90FILES10:.F90=.o) $(F77FILES:.F=.o)
+
+
+
+
+
+$(TARGET1): $(INC2) $(OMOD) $(OBJECTS1)  $(DEBOBJ77) $(DEBOBJ90)
+	cd ./TMP ; $(LD) $(LINKFLAGS) -o ../$(TARGET1) $(OMOD) $(OBJECTS1) $(LIBS) 
+
+$(TARGET2): $(INC2) $(OMOD) $(OBJECTS2)  $(DEBOBJ77) $(DEBOBJ90)
+	cd ./TMP ; $(LD) $(LINKFLAGS) -o ../$(TARGET2) $(OMOD) $(OBJECTS2) $(LIBS) 
+
+$(TARGET3): $(INC2) $(OMOD) $(OBJECTS3)  $(DEBOBJ77) $(DEBOBJ90)
+	cd ./TMP ; $(LD) $(LINKFLAGS3) -o ../$(TARGET3) $(OMOD) $(OBJECTS3) $(LIBS) 
+
+$(TARGET4): $(INC2) $(OMOD) $(OBJECTS4)  $(DEBOBJ77) $(DEBOBJ90)
+	cd ./TMP ; $(LD) $(LINKFLAGS4) -o ../$(TARGET4) $(OMOD) $(OBJECTS4) $(LIBS) 
+#
+$(TARGET5): $(INC2) $(OMOD) $(OBJECTS5)  $(DEBOBJ77) $(DEBOBJ90)
+	cd ./TMP ; $(LD) $(LINKFLAGS5) -o ../$(TARGET5) $(OMOD) $(OBJECTS5) $(LIBS) 
+
+$(TARGET6): $(INC2) $(OMOD) $(OBJECTS6)  $(DEBOBJ77) $(DEBOBJ90)
+	cd ./TMP ; $(LD) $(LINKFLAGS6) -o ../$(TARGET6) $(OMOD) $(OBJECTS6) $(LIBS) 
+ 
+###############################################################################
+# To generate daily2pak
+OBJECTS7=pakk.o m_prepak26_hack.o m_pakmsk.o p_daily2pak.o m_get_daily_infiles.o \
+		 m_mkfldh.o m_year_day.o m_mersea_prepare.o mod_read_dailyab.o \
+	     m_get_grid.o mod_xc.o mod_za.o mod_dimensions.o  m_oldtonew.o m_pivotp.o \
+		 m_bigrid.o m_pakmsk.o machi_c.o machine.o m_indxi.o m_indxj.o fsize.o 
+		 
+
+$(TARGET7): $(INC2)  $(OBJECTS7) 
+	cd ./TMP ; $(LD) $(LINKFLAGS) -o ../$(TARGET7)  $(OBJECTS7) $(LIBS) 
+
+###############################################################################
+# To generate levitus2obs
+OBJECTS8=mod_dimensions.o mod_measurement.o m_read_levitus.o m_read_PHC.o \
+		 m_get_mod_grid.o mod_states.o m_initconfmap.o mod_confmap.o    \
+		 m_oldtonew.o m_pivotp.o p_levitus2obs.o m_bilincoeff.o           \
+		 mod_common.o mod_atmforc.o  mod_year_info.o m_tecfld.o m_insitu2theta.o
+$(TARGET8): $(INC2)  $(OBJECTS8)  $(DEBOBJ77) $(DEBOBJ90)
+	cd ./TMP ; $(LD) $(LINKFLAGS8) -o ../$(TARGET8)  $(OBJECTS8) $(LIBS) 
+###############################################################################
+$(TARGET9): $(INC2) $(OMOD) $(OBJECTS9)  $(DEBOBJ77) $(DEBOBJ90)
+	cd ./TMP ; $(LD) $(LINKFLAGS9) -o ../$(TARGET9) $(OMOD) $(OBJECTS9) $(LIBS) 
+###############################################################################
+$(TARGET10): $(INC2) $(OMOD) $(OBJECTS10)  $(DEBOBJ77) $(DEBOBJ90)
+	cd ./TMP ; $(LD) $(LINKFLAGS10) -o ../$(TARGET10) $(OMOD) $(OBJECTS10) $(LIBS) 
+###############################################################################
+OBJECTS11=mod_dimensions.o mod_common.o mod_daily_average.o mod_year_info.o \
+		   m_blkdat.o m_gridsize.o m_geopar.o m_inicon.o m_dpthuv.o \
+		   m_year_day.o m_get_daily_infiles.o m_interface_bug.o \
+		   m_datetojulian.o m_indxi.o m_indxj.o p_dailymean.o m_spherdist.o \
+		   m_mercrot.o m_blkini.o m_blkinr.o m_blkinvoid.o m_blkinl.o \
+		   m_mercator.o m_bigrid.o m_sshcalc.o
+
+$(TARGET11): $(OBJECTS11) $(INC2) 
+	cd ./TMP ; $(LD) $(LINKFLAGS11) -o ../$(TARGET11) $(OBJECTS11) $(LIBS) 
+###############################################################################
+###############################################################################
+OBJECTS12=mod_dimensions.o mod_common.o mod_daily_average.o mod_year_info.o \
+		   m_blkdat.o m_gridsize.o m_geopar.o m_inicon.o m_dpthuv.o \
+		   m_year_day.o m_get_daily_infiles.o m_interface_bug.o \
+		   m_datetojulian.o m_indxi.o m_indxj.o p_dailyfixname.o m_spherdist.o \
+		   m_mercrot.o m_blkini.o m_blkinr.o m_blkinvoid.o m_blkinl.o \
+		   m_mercator.o m_bigrid.o m_sshcalc.o
+
+$(TARGET12): $(OBJECTS12) $(INC2) 
+	cd ./TMP ; $(LD) $(LINKFLAGS12) -o ../$(TARGET12) $(OBJECTS12) $(LIBS) 
+###############################################################################
+OBJECTS13=m_datetojulian.o p_dayofweek.o
+
+$(TARGET13): $(OBJECTS13) $(INC2) 
+	cd ./TMP ; $(LD) $(LINKFLAGS13) -o ../$(TARGET13) $(OBJECTS13) $(LIBS) 
+###############################################################################
+###############################################################################
+# To generate safo2obs
+OBJECTS14=mod_dimensions.o mod_measurement.o m_read_safo.o m_read_PHC.o \
+		 m_get_mod_grid.o mod_states.o m_initconfmap.o mod_confmap.o    \
+		 m_oldtonew.o m_pivotp.o p_safotoobs.o m_bilincoeff.o           \
+		 mod_common.o mod_atmforc.o  mod_year_info.o m_tecfld.o m_insitu2theta.o
+$(TARGET14): $(INC2)  $(OBJECTS14)  $(DEBOBJ77) $(DEBOBJ90)
+	cd ./TMP ; $(LD) $(LINKFLAGS14) -o ../$(TARGET14)  $(OBJECTS14) $(LIBS) 
+###############################################################################
+# To generate coriolis2obs
+OBJECTS15=mod_dimensions.o mod_measurement.o m_read_coriolis.o          \
+		 m_get_mod_grid.o mod_states.o m_initconfmap.o mod_confmap.o    \
+		 m_oldtonew.o m_pivotp.o p_coriolis2obs.o m_bilincoeff.o           \
+		 mod_common.o mod_atmforc.o  mod_year_info.o m_tecfld.o         \
+		 m_get_depth_interval.o m_datetojulian.o
+$(TARGET15): $(INC2)  $(OBJECTS15)  
+	cd ./TMP ; $(LD) $(LINKFLAGS15) -o ../$(TARGET15)  $(OBJECTS15) $(LIBS) 
+###############################################################################
+# To generate tide2obs
+OBJECTS16=mod_dimensions.o mod_measurement.o m_read_tide.o          \
+		 m_get_mod_grid.o mod_states.o m_initconfmap.o mod_confmap.o    \
+		 m_oldtonew.o m_pivotp.o p_tide2obs.o m_bilincoeff.o           \
+		 mod_common.o mod_atmforc.o  mod_year_info.o m_tecfld.o         \
+		 m_get_depth_interval.o m_datetojulian.o rosame_filtre_demerliac_v00.o \
+		 m_spherdist.o
+$(TARGET16): $(INC2)  $(OBJECTS16)  
+	cd ./TMP ; $(LD) $(LINKFLAGS16) -o ../$(TARGET16)  $(OBJECTS16) $(LIBS) 
+###############################################################################
+# To generate innovstat
+OBJECTS17=mod_innovations_io.o m_datetojulian.o p_innovstat.o mod_sphere_tools.o \
+		  m_get_regions.o
+$(TARGET17): $(INC2)  $(OBJECTS17)  
+	cd ./TMP ; $(LD) $(LINKFLAGS17) -o ../$(TARGET17)  $(OBJECTS17) $(LIBS) 
+###############################################################################
+
+clean:
+	cd ./TMP ; rm *.f  *.o *.f90 *.h *.mod
+
+
+new: source depend
+
+source:
+	mksource.sh > source.files
+
+depend:
+	mkdepend.pl | sort -u > depends.file
+
+include depends.file
+

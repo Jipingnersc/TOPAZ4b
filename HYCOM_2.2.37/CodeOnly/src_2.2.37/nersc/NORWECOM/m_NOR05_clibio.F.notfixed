@@ -1,0 +1,351 @@
+      module m_NOR05_clibio
+     
+      contains
+ 
+      subroutine clibio(NDATE,ZZ)
+C
+C***BEGIN PROLOGUE CLIBIO
+C***REVISION DATE 29/3-93
+C       Morten D. Skogen, morten@imr.no
+C       New climatologi for nutrients. Use station M data instead
+C       of sinusoidal variation, and also add DET at the boundary
+C       according to the assumption that totN is constant = 12.
+c       NB! put DET=0 at the boundary.
+C***PURPOSE CLIBIO computes the values for NIT, PHO and SIL in
+C       the FRS-zone. Measurements from stationM (66N,2E) is used for this.
+C
+C***DESCRIPTION
+C       At present CLIBIO is called every 2nd day, and the run is 
+C       started 15th December, while first NUTDAY in file is 7.
+C       To avoid complications because of newyear and DAYNR goes
+C       from 365 -> 1 (and the probelms this causes when 
+C       checking realitionships between NUTDAY and DAYNR), we
+C       check if(daynr.eq.nutday.or.daynr.eq.nutday+1).
+C       If CLIBIO should be called something else than every 2nd
+C       day this must be changed!!!!!
+C       Else, if data in stasjonM.dat is given to successive days,
+C       then the next check will be problematic, and must be
+C       changed also.
+C
+C***RELATED ROUTINES : CLIFRS computes FRS-zone values for U,V,S,T and EL
+C
+C***ROUTINES CALLED-NONE
+C***END PROLOGUE
+      implicit none
+C
+C
+C Common variables
+C
+C   Global variables.
+C
+      INTEGER NDATE(5)
+      REAL ZZ(KB)
+      REAL NITE10(LB,JM,KB),NITEM0(LB,JM,KB),NITE0N(IM,LB,KB)
+      REAL PHOE10(LB,JM,KB),PHOEM0(LB,JM,KB),PHOE0N(IM,LB,KB)
+      REAL SILE10(LB,JM,KB),SILEM0(LB,JM,KB),SILE0N(IM,LB,KB)
+      REAL DETE10(LB,JM,KB),DETEM0(LB,JM,KB),DETE0N(IM,LB,KB)
+      COMMON/NITEXT/NITE10,NITEM0,NITE0N
+      COMMON/PHOEXT/PHOE10,PHOEM0,PHOE0N
+      COMMON/SILEXT/SILE10,SILEM0,SILE0N
+      COMMON/DETEXT/DETE10,DETEM0,DETE0N
+C
+C   Local variables.
+C 
+      INTEGER I,J,K,MM10,NM10
+      INTEGER ND(12),LY
+      DATA ND/31,28,31,30,31,30,31,31,30,31,30,31/
+      integer daynr
+      real cnit,cpho,csil
+      data cnit/14.01/,cpho/30.97/,csil/28.09/
+c
+      real dyp(25),no2(25),no3(25),po4(25),si(25),zdyp
+      real no2stm(25),no3stm(25),po4stm(25),sistm(25)
+      integer nutday,olnday,numlev,lbot,ll
+C LOCAL VARIABELES ASSIGNING ERSEM VALUES
+      INTEGER MON
+      REAL NIT30(12),PHO30(12),SIL30(12)
+      REAL NIT100(12),PHO100(12),SIL100(12)
+      REAL NIT250(12),PHO250(12),SIL250(12)
+      REAL NITCH(12),PHOCH(12),SILCH(12)
+      DATA  NIT30/9.,9.,7.,3.,1.,1.5,2. ,2. ,4. ,5.5,6.5,7.5/
+      DATA NIT100/9.,9.,7.,6.,5.,5. ,4. ,5. ,5. ,5.5,7. ,8./
+      DATA NIT250/9.,9.,8.,8.,9.,6.5,6.5,9.0,9. ,9. ,9. ,8./
+      DATA  NITCH/10.,15.,8.,2.,1.,1.,1.,.5,2.,6.,9.,9./
+      DATA  PHO30/.7,.8,.6,.4,.3,.3,.3,.3,.4,.5,.6,.7/
+      DATA PHO100/.7,.8,.6,.6,.5,.5,.4,.4,.5,.6,.7,.7/
+      DATA PHO250/.8,.8,.8,.8,.8,.7,.7,.7,.8,.8,.8,.8/
+      DATA  PHOCH/.8,.8,.5,.2,.2,.4,.4,.2,.3,.6,.8,.9/
+      DATA  SIL30/5.,4.,4.,3.,2.,1.,1.,1.,2.,3.,4.,4./
+      DATA SIL100/6.,4.,4.,3.,2.,2.,2.,2.,3.,4.,4.,5./
+      DATA SIL250/7.,6.,5.,4.,4.,4.,4.,4.,4.,4.,5.,6./
+      DATA  SILCH/7.,5.,3.,2.,1.,1.,1.,2.,3.,4.,5.,6./
+C
+C***FIRST EXECUTABLE STATEMENT
+C
+      MM10=IM-LB+1
+      NM10=JM-LB+1
+C
+C   Check on leap year.
+C
+      ND(2)=28
+      LY=NDATE(1)-(NDATE(1)/4)*4
+      IF(LY.EQ.0) ND(2)=29
+C
+      daynr = 0
+      do 101 i=1,ndate(2)-1
+         daynr = daynr + nd(i)
+ 101  continue
+      daynr = daynr + ndate(3)
+C----------------------------------------------------------------
+C Open file and find the correct position in it
+C----------------------------------------------------------------
+      open(92,file='indata/stasjonM.dat',STATUS='old')
+      read(92,*)nutday,dyp(1),no2(1),no3(1),po4(1),si(1)
+C
+C Daynr <= first day in file
+C
+      if(daynr.le.nutday)goto 199
+C
+ 190  read(92,*,end=192)nutday,dyp(1),no2(1),no3(1),po4(1),si(1)
+      if(daynr.gt.nutday)goto 190
+      goto 199
+C
+C Daynr >= largest NUTDAY (use first NUTDAY)
+C
+ 192  rewind(92)
+      read(92,*)nutday,dyp(1),no2(1),no3(1),po4(1),si(1)
+C
+C Have found correct position in file
+C
+ 199  backspace(92)
+      olnday = nutday
+C----------------------------------------------------------------
+C Read values for inflow of nutrients in FRS
+C----------------------------------------------------------------
+      k = 1
+ 600  read(92,*,end=611)nutday,dyp(k),no2(k),no3(k),po4(k),si(k)
+      if(nutday.eq.olnday)then
+         k = k+1
+         goto 600
+      else
+         goto 611
+      end if
+C
+ 611  numlev = k-1
+c
+c save Station M values
+c
+      do k=1,numlev
+         no2stm(k)=no2(k)
+         no3stm(k)=no3(k)
+         po4stm(k)=po4(k)
+         sistm(k)=si(k)
+      enddo
+
+C
+C CHANGE VALUES IN THE UPPER 100 M ACCORDING TO ERSEM
+C
+      MON=NDATE(2)
+      DO K=1,NUMLEV
+         IF (DYP(K) .LE. 30. ) THEN
+            NO3(K)=MIN(NIT30(MON),NO3(K))
+            PO4(K)=MIN(PHO30(MON),PO4(K))
+            SI(K) =MIN(SIL30(MON),SI(K))
+         ELSEIF (DYP(K) .GT. 30. .AND. DYP(K) .LE. 100. ) THEN
+            NO3(K)=MIN(NIT100(MON),NO3(K))
+            PO4(K)=MIN(PHO100(MON),PO4(K))
+            SI(K) =MIN(SIL100(MON),SI(K))
+c         ELSEIF (DYP(K) .GT. 100. .AND. DYP(K) .LE. 250. ) THEN
+c            NO3(K)=MIN(NIT250(MON),NO3(K))
+c            PO4(K)=MIN(PHO250(MON),PO4(K))
+c            SI(K) =MIN(SIL250(MON),SI(K))
+         ENDIF
+      ENDDO
+C----------------------------------------------------------------
+C Update. Interpolation is same as in Z2SIGMA.F
+C----------------------------------------------------------------
+c e10 is the sw boundary
+      do 702 j=1,jm
+      do 702 i=1,lb
+         lbot = 0
+         do ll=1,numlev
+            if(dyp(ll).lt.depths(i,j))then
+               lbot = ll
+            end if
+         end do
+
+         do 702 k=1,kb-1
+            zdyp = -zz(k)*depths(i,j)
+            if(zdyp.lt.dyp(1))then
+               nite10(i,j,k) = cnit*(no2(1)+no3(1))
+               phoe10(i,j,k) = cpho*po4(1)
+               sile10(i,j,k) = csil*si(1)
+            else if(zdyp.ge.dyp(lbot))then
+               nite10(i,j,k) = cnit*(no2(lbot)+no3(lbot))
+               phoe10(i,j,k) = cpho*po4(lbot)
+               sile10(i,j,k) = csil*si(lbot)
+            else
+               do ll=1,lbot-1
+                  if((zdyp.ge.dyp(ll)).and.(zdyp.lt.dyp(ll+1)))then
+                     nite10(i,j,k) = cnit*(no2(ll)+no3(ll) +
+     +                 (no3(ll+1)+no2(ll+1)-no3(ll)-no2(ll))*
+     +                 (zdyp-dyp(ll))/(dyp(ll+1)-dyp(ll)))
+                     phoe10(i,j,k) = cpho*(po4(ll)+(po4(ll+1)-po4(ll))*
+     +                 (zdyp-dyp(ll))/(dyp(ll+1)-dyp(ll)))
+                     sile10(i,j,k) = csil*(si(ll) + (si(ll+1)-si(ll))*
+     +                 (zdyp-dyp(ll))/(dyp(ll+1)-dyp(ll)))
+                  end if
+               end do
+            end if
+            dete10(i,j,k) = 0.0
+chs            dete10(i,j,k) = max(1.e-3,12.*cnit-nite10(i,j,k))
+ 702  continue
+C
+C  ASSIGN SPESIAL VALUES IN THE CHANNEL FOR DEPTHS LESS THAN 30m
+C
+      DO K=1,KB-1
+          DO J=1,30
+             DO I=1,LB
+                zdyp = -zz(k)*depths(i,j)
+                if (zdyp .lt. 30.) then
+                  NITE10(I,J,K)=CNIT*NITCH(MON)
+                  PHOE10(I,J,K)=CPHO*PHOCH(MON)
+                  SILE10(I,J,K)=CSIL*SILCH(MON)
+                endif
+                dete10(i,j,k) = max(1.e-3,10.*cnit-nite10(i,j,k))
+             ENDDO
+          ENDDO
+       ENDDO
+
+
+c Station M values in the channel
+c      do 703 j=1,30
+c      do 703 i=1,lb
+c         lbot = 0
+c         do ll=1,numlev
+c            if(dyp(ll).lt.depths(i,j))then
+c               lbot = ll
+c            end if
+c         end do
+c
+c         do 703 k=1,kb-1
+c            zdyp = -zz(k)*depths(i,j)
+c            if(zdyp.lt.dyp(1))then
+c               nite10(i,j,k) = cnit*(no2stm(1)+no3stm(1))
+c               phoe10(i,j,k) = cpho*po4stm(1)
+c               sile10(i,j,k) = csil*sistm(1)
+c            else if(zdyp.ge.dyp(lbot))then
+c               nite10(i,j,k) = cnit*(no2stm(lbot)+no3stm(lbot))
+c               phoe10(i,j,k) = cpho*po4stm(lbot)
+c               sile10(i,j,k) = csil*sistm(lbot)
+c            else
+c               do ll=1,lbot-1
+c                  if((zdyp.ge.dyp(ll)).and.(zdyp.lt.dyp(ll+1)))then
+c                     nite10(i,j,k) = cnit*(no2stm(ll)+no3stm(ll) +
+c     +              (no3stm(ll+1)+no2stm(ll+1)-no3stm(ll)-no2stm(ll))*
+c     +                 (zdyp-dyp(ll))/(dyp(ll+1)-dyp(ll)))
+c                     phoe10(i,j,k) = cpho*(po4stm(ll)+
+c     +                (po4stm(ll+1)-po4stm(ll))*
+c     +                 (zdyp-dyp(ll))/(dyp(ll+1)-dyp(ll)))
+c                     sile10(i,j,k) = 
+c     +               csil*(sistm(ll) + (sistm(ll+1)-sistm(ll))*
+c     +                 (zdyp-dyp(ll))/(dyp(ll+1)-dyp(ll)))
+c                  end if
+c               end do
+c            end if
+chs            dete10(i,j,k) = 0.0
+c            dete10(i,j,k) = max(1.e-3,12.*cnit-nite10(i,j,k))
+c 703     continue
+
+
+
+CCCCCCCCCCCCCCCCC
+c m0 is the ne boundary
+
+      do 705 j=1,jm
+      do 705 i=1,lb
+         lbot = 0
+         do ll=1,numlev
+            if(dyp(ll).lt.depths(mm10+i-1,j))then
+               lbot = ll
+            end if
+         end do
+ 
+         do 705 k=1,kb-1
+            zdyp = -zz(k)*depths(mm10+i-1,j)
+            if(zdyp.lt.dyp(1))then
+               nitem0(i,j,k) = cnit*(no2(1)+no3(1))
+               phoem0(i,j,k) = cpho*po4(1)
+               silem0(i,j,k) = csil*si(1)
+            else if(zdyp.ge.dyp(lbot))then
+               nitem0(i,j,k) = cnit*(no2(lbot)+no3(lbot))
+               phoem0(i,j,k) = cpho*po4(lbot)
+               silem0(i,j,k) = csil*si(lbot)
+            else
+               do ll=1,lbot-1
+                  if((zdyp.ge.dyp(ll)).and.(zdyp.lt.dyp(ll+1)))then
+                     nitem0(i,j,k) = cnit*(no2(ll)+no3(ll) +
+     +                 (no3(ll+1)+no2(ll+1)-no3(ll)-no2(ll))*
+     +                 (zdyp-dyp(ll))/(dyp(ll+1)-dyp(ll)))
+                     phoem0(i,j,k) = cpho*(po4(ll)+
+     +                 (po4(ll+1)-po4(ll))*(zdyp-dyp(ll))/
+     +                 (dyp(ll+1)-dyp(ll)))
+                     silem0(i,j,k) = csil*(si(ll) + 
+     +                 (si(ll+1)-si(ll))*(zdyp-dyp(ll))/
+     +                 (dyp(ll+1)-dyp(ll)))
+                  end if
+               end do
+            end if
+            detem0(i,j,k) = 0.0
+chs            detem0(i,j,k) =
+chs     +             max(1.e-3,12.*cnit-nitem0(i,j,k))
+ 705  continue
+CCCCCCCCCCCCCCCCC
+c 0n is the western boundary
+
+      do 708 j=1,lb
+      do 708 i=1,im
+         lbot = 0
+         do ll=1,numlev
+            if(dyp(ll).lt.depths(i,nm10+j-1))then
+               lbot = ll
+            end if
+         end do
+ 
+         do 708 k=1,kb-1
+            zdyp = -zz(k)*depths(i,nm10+j-1)
+            if(zdyp.lt.dyp(1))then
+               nite0n(i,j,k) = cnit*(no2(1)+no3(1))
+               phoe0n(i,j,k) = cpho*po4(1)
+               sile0n(i,j,k) = csil*si(1)
+            else if(zdyp.ge.dyp(lbot))then
+               nite0n(i,j,k) = cnit*(no2(lbot)+no3(lbot))
+               phoe0n(i,j,k) = cpho*po4(lbot)
+               sile0n(i,j,k) = csil*si(lbot)
+            else
+               do ll=1,lbot-1
+                  if((zdyp.ge.dyp(ll)).and.(zdyp.lt.dyp(ll+1)))then
+                     nite0n(i,j,k) = cnit*(no2(ll)+no3(ll) +
+     +                 (no3(ll+1)+no2(ll+1)-no3(ll)-no2(ll))*
+     +                 (zdyp-dyp(ll))/(dyp(ll+1)-dyp(ll)))
+                     phoe0n(i,j,k) = cpho*(po4(ll)+
+     +                 (po4(ll+1)-po4(ll))*(zdyp-dyp(ll))/
+     +                 (dyp(ll+1)-dyp(ll)))
+                     sile0n(i,j,k) = csil*(si(ll) + 
+     +                 (si(ll+1)-si(ll))*(zdyp-dyp(ll))/
+     +                 (dyp(ll+1)-dyp(ll)))
+                  end if
+               end do
+            end if
+            dete0n(i,j,k) = 0.0
+chs            dete0n(i,j,k) =
+chs     +             max(1.e-3,12.*cnit-nite0n(i,j,k))
+ 708  continue
+C
+      close(92)
+C
+C***END CLIBIO
+C
+      RETURN
+      end subroutine clibio
+      end module m_NOR05_clibio

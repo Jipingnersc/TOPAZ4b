@@ -1,0 +1,227 @@
+      module m_NOR05_initsediment
+
+      contains
+ 
+      subroutine initsediment(H,FSM,DUM,DVM,ZZ,LINN,
+     &       ZINN,F3D,F2D,NMEAN,DT,DZ)
+C
+C***BEGIN PROLOGUE INITSEDIMENT
+C***DATE WRITTEN   22/9-1995
+
+C
+C***PURPOSE INITSEDIMENT initiates sediment layer variables.
+C
+C       See the file globals.doc for description of the
+C       global variables.
+C
+C***END PROLOGUE INITSEDIMENT
+C
+      implicit none
+      INCLUDE 'sedcom.h'
+C
+C   Global variables.
+C
+      INTEGER IBALT,JBALT
+      COMMON /IJBALT/IBALT,JBALT
+C
+      INTEGER LINN
+      REAL H(IM,JM),FSM(IM,JM),DUM(IM,JM),DVM(IM,JM),ZZ(KB)
+      REAL F3D(IM,JM,LINN),F2D(IM,JM),ZINN(LINN),DT(IM,JM),DZ(KB)
+C
+C   Local variables
+C
+      INTEGER I,J,K,MM10,NM10
+C
+C   Common boundary variables.
+C
+      REAL NMEAN(IM,JM,KB)
+c
+c Sediment Boundary variables
+c
+      REAL SISE10(LB,JM,KB),SISEM0(LB,JM,KB),SISE0N(IM,LB,KB)
+      REAL OXYE10(LB,JM,KB),OXYEM0(LB,JM,KB),OXYE0N(IM,LB,KB)
+      REAL YELE10(LB,JM,KB),YELEM0(LB,JM,KB),YELE0N(IM,LB,KB)
+      REAL SEDE10(LB,JM,KB),SEDEM0(LB,JM,KB),SEDE0N(IM,LB,KB)
+
+C
+      COMMON/SISEXT/SISE10,SISEM0,SISE0N
+      COMMON/OXYEXT/OXYE10,OXYEM0,OXYE0N
+      COMMON/YELEXT/YELE10,YELEM0,YELE0N
+      COMMON/SEDEXT/SEDE10,SEDEM0,SEDE0N
+
+C
+      REAL SISSOUTH(KB),OXYSOUTH(KB),YELSOUTH(KB),SEDSOUTH(KB)
+
+      COMMON/SEDSOUTH/SISSOUTH,OXYSOUTH,YELSOUTH,SEDSOUTH
+C
+C SURFACE FLUXES
+C
+      REAL SISSURF(IM,JM),OXYSURF(IM,JM),YELSURF(IM,JM),
+     +     SEDSURF(IM,JM)
+      COMMON/SURFSED/SISSURF,OXYSURF,YELSURF,SEDSURF
+
+      CHARACTER*19 NITNAME,PHONAME
+      CHARACTER*18 SILNAME
+C
+C***FIRST EXECUTABLE STATEMENT INITSEDIMENT
+C
+      MM10=IM-LB+1
+      NM10=JM-LB+1
+C
+C**********************************************************************
+C
+C     FIELD INITIALISATION FOR BOTTOM LAYER
+C
+C***********************************************************************
+c      DZ(KB)=1.0
+C
+C     Initialize the bottom
+C
+      K=KB
+C
+      DO 11 J = 1,JM
+      DO 11 I = 1,IM
+c  typiske verdier
+c         NIT(I,J,K) = 155.
+c         PHO(I,J,K) = 22.
+c         SIL(I,J,K) = 150.
+c         DIA(I,J,K) = 2.75
+c         FLA(I,J,K) = 2.75
+c test verdier for sediment
+         NIT(I,J,K) = 0.
+         PHO(I,J,K) = 0.
+         SIL(I,J,K) = 0.
+         DIA(I,J,K) = 0.
+         FLA(I,J,K) = 0.
+      #ifdef CHATONELLA
+         CHA(I,J,K) = 0.
+      #endif
+         DET(I,J,K) = 0.
+C
+         SIS(I,J,K) = 0.
+         OXY(I,J,K) = 0.
+         YEL(I,J,K) = 0.
+C  SED in mg/m2
+C  500g/m2 =5.0e5 mg/m2
+c         SED(I,J,K) = 5.0e5
+         SED(I,J,K) = 0.0
+ 11   CONTINUE
+
+C
+C   Zero the arrays in land points.
+C
+      DO 31 J = 1,JM
+      DO 31 I = 1,IM
+         NIT(I,J,K) = NIT(I,J,K)*FSM(I,J)
+         PHO(I,J,K) = PHO(I,J,K)*FSM(I,J)
+         SIL(I,J,K) = SIL(I,J,K)*FSM(I,J)
+         DIA(I,J,K) = DIA(I,J,K)*FSM(I,J)
+         FLA(I,J,K) = FLA(I,J,K)*FSM(I,J)
+      #ifdef CHATONELLA
+         CHA(I,J,K) = CHA(I,J,K)*FSM(I,J)
+      #endif
+         DET(I,J,K) = DET(I,J,K)*FSM(I,J)
+C
+         SIS(I,J,K) = SIS(I,J,K)*FSM(I,J)
+         OXY(I,J,K) = OXY(I,J,K)*FSM(I,J)
+         YEL(I,J,K) = YEL(I,J,K)*FSM(I,J)
+         SED(I,J,K) = SED(I,J,K)*FSM(I,J)
+         DETBU(I,J)=0.0
+         DENIT(I,J)=0.0
+         SISBU(I,J)=0.0
+ 31   CONTINUE
+C
+C     FIELD INITIALISATION FOR BOUNDARY CONDITION
+C
+C***********************************************************************
+C
+C    3-D BOUNDARY VALUE ARRAYS
+C
+      DO 110 J = 1,JM
+      DO 110 I = 1,LB
+         NITE10(I,J,K)=NIT(I,J,K)
+         PHOE10(I,J,K)=PHO(I,J,K)
+         SILE10(I,J,K)=SIL(I,J,K)
+         DETE10(I,J,K)=DET(I,J,K)
+         DIAE10(I,J,K)=DIA(I,J,K)
+         FLAE10(I,J,K)=FLA(I,J,K)
+         NITEM0(I,J,K)=NIT(MM10+I-1,J,K)
+         PHOEM0(I,J,K)=PHO(MM10+I-1,J,K)
+         SILEM0(I,J,K)=SIL(MM10+I-1,J,K)
+         DETEM0(I,J,K)=DET(MM10+I-1,J,K)
+         DIAEM0(I,J,K)=DIA(MM10+I-1,J,K)
+         FLAEM0(I,J,K)=FLA(MM10+I-1,J,K)
+      #ifdef CHATONELLA
+         CHAE10(I,J,K)=CHA(I,J,K)
+         CHAEM0(I,J,K)=CHA(MM10+I-1,J,K)
+      #endif
+ 110  CONTINUE
+C
+      DO 120 J = 1,LB
+      DO 120 I = 1,IM
+         NITE0N(I,J,K)=NIT(I,NM10+J-1,K)
+         PHOE0N(I,J,K)=PHO(I,NM10+J-1,K)
+         SILE0N(I,J,K)=SIL(I,NM10+J-1,K)
+         DETE0N(I,J,K)=DET(I,NM10+J-1,K)
+         DIAE0N(I,J,K)=DIA(I,NM10+J-1,K)
+         FLAE0N(I,J,K)=FLA(I,NM10+J-1,K)
+      #ifdef CHATONELLA
+         CHAE0N(I,J,K)=CHA(I,NM10+J-1,K)
+      #endif
+ 120  CONTINUE
+C
+C  Define Initial and Boundary values at the South .
+C
+
+         NSOUTH(K) = NIT(IBALT,1,K)
+         PSOUTH(K) = PHO(IBALT,1,K)
+         SISOUT(K) = SIL(IBALT,1,K)
+         DETSOUT(K)= DET(IBALT,1,K)
+         DIASOUT(K)= DIA(IBALT,1,K)
+         FLASOUT(K)= FLA(IBALT,1,K)
+      #ifdef CHATONELLA
+         CHASOUT(K)= CHA(IBALT,1,K)
+      #endif
+c
+c     "sediment" variables
+c
+      IF (SEDIMENT) THEN
+C
+C
+C    3-D BOUNDARY VALUE ARRAYS
+C
+      DO 111 J = 1,JM
+      DO 111 I = 1,LB
+         SISE10(I,J,K)=SIS(I,J,K)
+         OXYE10(I,J,K)=OXY(I,J,K)
+         YELE10(I,J,K)=YEL(I,J,K)
+         SEDE10(I,J,K)=SED(I,J,K)
+         SISEM0(I,J,K)=SIS(MM10+I-1,J,K)
+         OXYEM0(I,J,K)=OXY(MM10+I-1,J,K)
+         YELEM0(I,J,K)=YEL(MM10+I-1,J,K)
+         SEDEM0(I,J,K)=SED(MM10+I-1,J,K)
+ 111  CONTINUE
+C
+      DO 121 J = 1,LB
+      DO 121 I = 1,IM
+         SISE0N(I,J,K)=SIS(I,NM10+J-1,K)
+         OXYE0N(I,J,K)=OXY(I,NM10+J-1,K)
+         YELE0N(I,J,K)=YEL(I,NM10+J-1,K)
+         SEDE0N(I,J,K)=SED(I,NM10+J-1,K)
+ 121  CONTINUE
+C
+C  Define Initial and Boundary values at the South .
+C
+         SISSOUTH(K) = SIS(IBALT,1,K)
+         OXYSOUTH(K) = OXY(IBALT,1,K)
+         YELSOUTH(K) = YEL(IBALT,1,K)
+         SEDSOUTH(K) = SED(IBALT,1,K)
+C
+      ENDIF
+C
+C
+C***END subroutine INITSEDIMENT
+C
+      RETURN
+      end subroutine initsediment
+      end module m_NOR05_initsediment

@@ -1,0 +1,1499 @@
+!Routines:
+!   daily_average      -- main wrapper for routines 
+!   daily_average_read -- For reading dumpfiles     
+!   daily_average_save -- For saving dumpfiles     
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!   daily_ave_add      -- For adding averages       
+!   daily_ave_ini      -- Average initialization    
+!   daily_ave_dump     -- Dumps average to disk  - uses read/save above
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!
+!   da_div_int         -- divides daily_average type with integer
+!   da_plus_da         -- adds together daily_averages types
+!   da_div_dp          -- Divides 3D fields by layer thicknesses
+!   
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!
+! This module accumulates daily averages. When the 
+! "current day number" switches (tested in the rt 
+! variable) the average is dumped and a new averaging cycle
+! begins.
+!
+! Note that only daily_average and daily_average_read should 
+! be called by the user. The remaining routines are private 
+! and can only be accessed from this module.
+!
+! NB: Currently there are NO restart capabilities. If you 
+! stop hycom at the middle of the day, all averaging data
+! for that day will be lost. 
+!
+! Knut Liseter 07.05.2003
+!
+!Changed 20.11.2003 -- makeshift conversion for hycom 2.1.03
+!Changed 07.07.2004 -- Fully MPI-enabled. Global arrays are gone
+!in place of local arrays.
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+      module mod_daily_average
+      use mod_xc
+      use mod_year_info
+#if defined (ECOSYS)      
+      use mod_necessary_ecovars
+#endif
+      implicit none
+      logical, save :: l_daily_average
+      logical, save :: l_daily_accum
+#ifndef DAILY_AVERAGE
+
+      ! If the CPP flag "DAILY_AVERAGE" is undefined, this is the
+      ! only variable present in this module
+      logical, parameter :: l_daily_average_in_code=.false.
+#else
+
+      ! See above
+      logical, parameter :: l_daily_average_in_code=.true.
+
+
+      ! This type is used in calculations
+      type daily_averages
+         integer         :: nrmem
+         integer         :: lmem(1000) ! To decide which members are saved
+         type(year_info) :: rtinit
+         type(year_info) :: rtdump
+         real, dimension (1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy,kdm) :: 
+     &      s,t,p,u,v,w
+         real, dimension (1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy) :: 
+     &      ub, vb, ssh, heatflux, swflx, salflx, emnp, taux, tauy
+#if defined (DAILY_ENSVAR)
+         real, dimension (1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy) :: 
+     &      ssh_sq, fice_sq, hice_sq
+#endif
+
+#if defined(ICE) || defined(ICESTATE)
+         real, dimension (1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy) :: 
+     &      fice,hice,hsnw,srfheatflux,srfalb,htndncy
+#endif
+#if defined(EVP) 
+         real, dimension (1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy) :: 
+     &      uice,vice,wice,tauxice,tauyice
+#endif
+#if defined(ECOSYS)
+         real, dimension(1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy,kdm,nbio) ::
+     &      bio_ave     
+#endif
+      end type daily_averages
+c
+      type (daily_averages),save :: da_hycom
+
+
+      integer, save :: da_counter = 0 !Increment counter
+      integer, save :: da_previous =-1 !"Previous" day number
+      integer, save :: da_banned =-1 !"Banned" day  
+c
+      type(year_info), save :: da_rtprev ! Previous day info. Used in dump
+      type(year_info), save :: da_rtinit ! Initial day info. Used in dump
+      type(year_info), save :: da_rtdump ! Dump day info. Used in dump 
+c
+      real, parameter :: daily_undef=-1e7 ! Tags undefined values
+      contains
+c  
+c
+C --- --------------------------------------------------
+C ---   This is the only routine called from  HYCOM
+C --- --------------------------------------------------
+      subroutine daily_average(rungen,rt,m,imem,restart,yrflag)
+      implicit none
+
+      integer,          intent(in) :: m,imem
+      logical,          intent(in) :: restart
+      character(len=3), intent(in) :: rungen
+      type(year_info),   intent(in) :: rt
+      integer, intent(in)::  yrflag
+c
+c --- Only run if daily average is switched on
+      if (.not. l_daily_average) return
+c
+      if (restart) then
+         if  ( rt%ihh > 1 ) then
+c ---       We do not start averaging unless we 
+c ---       have at least 23 hours ahead of us
+c ---       so this day is "banned"
+            da_banned=rt%idd
+         else
+            da_previous=rt%idd
+         end if
+         call daily_ave_ini(da_hycom)
+         da_rtinit=rt
+      end if
+c
+      if (da_banned==rt%idd) then
+         if (mnproc==1)  print *,'daily_average:This day is "banned"'//
+     &                           '-- no daily average'
+      else  
+c ---    We have just switched days
+         if (da_previous/=rt%idd) then
+            if ( da_banned/=da_previous) then
+               if (mnproc==1)print *,'daily: dump'
+               call daily_ave_dump(da_hycom,rungen,da_rtprev,
+     &                             imem,yrflag) ! NB .. da_rtprev
+            end if
+            call daily_ave_ini(da_hycom)
+         end if
+c ---    Add fields - no subsampling
+         call daily_ave_add(da_hycom,m)
+      end if
+c
+c --- Update previous day and time info
+      da_rtprev=rt
+      da_previous=rt%idd
+c
+Cdiag  print *,'Testing daily_ave_dump -- mnproc ',mnproc
+Cdiag  call daily_ave_dump(da_hycom,rungen,da_rtprev,imem,rforce) 
+Cdiag  print *,'da_counter:',da_counter
+Cdiag  call xcstop('(test_daily_out)')
+Cdiag  stop '(test_daily_out)'
+      end subroutine daily_average
+
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+C --- --------------------------------------------------
+C --- Routine adds model fields to da fields
+C --- --------------------------------------------------
+      subroutine daily_ave_add(da,m)
+      use mod_xc
+      use mod_forcing_nersc
+      use mod_common_ice
+#if defined (EVP)
+      use mod_evp , only : evp_u=> uvel , evp_v => vvel,
+     & evp_strairx => strairx, evp_strairy => strairy
+#endif
+#if defined (ECOSYS)
+      use mod_necessary_ecovars, only : nbio,bio
+#endif      
+      implicit none
+      integer             , intent(in)    :: m
+      type(daily_averages), intent(inout) :: da
+c
+      integer :: i,j,k,l,kbio
+      real, dimension(1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy) :: 
+     & icestrairx,icestrairy,icestrocnx,icestrocny
+      real ::ttaux,ttauy,utot,vtot
+      include 'common_blocks.h'
+
+c --- 3D fields
+      do k=1,kdm
+!$OMP PARALLEL DO PRIVATE(j,l,i,utot,vtot)
+!$OMP&         SCHEDULE(STATIC,jblk)
+         do j=1-margin,jj+margin
+         do l=1,isp(j)
+         do i=max(1-margin,ifp(j,l)),min(ilp(j,l),ii+margin)
+            da%s(i,j,k) = da%s(i,j,k) + saln(i,j,k,m)*dp(i,j,k,m)
+            da%t(i,j,k) = da%t(i,j,k) + temp(i,j,k,m)*dp(i,j,k,m)
+            da%p(i,j,k) = da%p(i,j,k) + p(i,j,k+1)
+c ---       NB - total velocity
+            utot=u(i,j,k,m) + ubavg(i,j,m)
+            vtot=v(i,j,k,m) + vbavg(i,j,m)
+            da%u(i,j,k) = da%u(i,j,k) + utot*dp(i,j,k,m)
+            da%v(i,j,k) = da%v(i,j,k) + vtot*dp(i,j,k,m)
+c ---       Used for kinetic energy
+            da%w(i,j,k) = da%w(i,j,k) + 
+     &         (vtot*vtot+utot*utot)*dp(i,j,k,m)
+         end do
+         end do
+         end do
+      end do
+#if defined (ECOSYS)
+      !Ecosystem
+      do kbio=1,nbio
+      do k=1,kdm
+!$OMP PARALLEL DO PRIVATE(j,l,i)
+!$OMP&         SCHEDULE(STATIC,jblk)
+         do j=1-margin,jj+margin
+         do l=1,isp(j)
+         do i=max(1-margin,ifp(j,l)),min(ilp(j,l),ii+margin)
+            da%bio_ave(i,j,k,kbio)=da%bio_ave(i,j,k,kbio)
+     &                            +bio(i,j,k,m,kbio)*dp(i,j,k,m)
+         end do
+         end do
+         end do
+!$OMP END PARALLEL DO
+      end do
+      end do
+cdiag print *,'daily_ave_add after 3D ecosyetem flds -- mnproc=', mnproc
+#endif /* ECOSYS */
+#if defined(EVP)
+      icestrairx=evp_strairx
+      icestrairy=evp_strairy
+      icestrocnx=tauxice
+      icestrocny=tauyice
+#endif
+c
+c --- 2D fields
+!$OMP  PARALLEL DO PRIVATE(j,i,ttaux,ttauy)
+!$OMP& SCHEDULE(STATIC,jblk)
+      do j=1-margin,jj+margin
+      do l=1,isp(j)
+      do i=max(1-margin,ifp(j,l)),min(ilp(j,l),ii+margin)
+         ttaux     =taux(i,j,l0)*w0+taux(i,j,l1)*w1
+     &             +taux(i,j,l2)*w2+taux(i,j,l3)*w3
+         ttauy     =tauy(i,j,l0)*w0+tauy(i,j,l1)*w1
+     &             +tauy(i,j,l2)*w2+tauy(i,j,l3)*w3
+#if defined(EVP)
+c ---    Modify by letting taux be the net stress acting on the
+c ---    combined ice/ocean surface
+         ttaux     = ttaux * (1.-ficem(i,j)) + 
+     &               ficem(i,j) * icestrairx(i,j)
+         ttauy     = ttauy * (1.-ficem(i,j)) + 
+     &               ficem(i,j) * icestrairy(i,j)
+#endif
+c
+         da%vb      (i,j) = da%vb   (i,j)   + vbavg(i,j,m)  
+         da%ub      (i,j) = da%ub   (i,j)   + ubavg(i,j,m)  
+         da%ssh     (i,j) = da%ssh  (i,j)   + srfhgt (i,j)/onem
+         da%taux    (i,j) = da%taux(i,j)    + ttaux
+         da%tauy    (i,j) = da%tauy(i,j)    + ttauy
+         da%heatflux(i,j) = da%heatflux(i,j)+ surflx (i,j)   ! Heat flux into ocean
+#if defined (DAILY_ENSVAR)
+         da%ssh_sq  (i,j) = da%ssh_sq  (i,j)   + 
+     &      (srfhgt  (i,j)**2)/onem**2
+         da%fice_sq (i,j) = da%fice_sq (i,j)   + ficem(i,j)**2
+         da%hice_sq (i,j) = da%hice_sq (i,j)   + hicem(i,j)**2
+#endif
+
+#if defined(ICE)
+c ---    NB: this is downward heat flux into ice and ocean - because
+c ---    of the simplicity of the standard ice module, this can be
+c ---    formulated as follows:
+         da%srfheatflux(i,j) = da%srfheatflux(i,j)
+     &   + surflx(i,j) 
+     &     - ( delta_icevol(i,j)*fusi 
+     &        +delta_snwvol(i,j)*fuss ) / baclin
+#elif defined(ICESTATE)
+#error " srfheatflux not def for ICESTATE"
+#endif
+#if defined(ICE) || defined(ICESTATE)
+         da%swflx   (i,j) = da%swflx(i,j)+ surf_qsw_sum   (i,j)  !  Average surface sw heat flux (area average)
+#else
+         da%swflx   (i,j) = da%swflx(i,j)   + sswflx (i,j)  ! SW heat flux into OCEAN
+#endif
+         da%salflx  (i,j) = da%salflx(i,j)  + salflx (i,j)   ! Sal flux into ocean
+         da%emnp    (i,j) = da%emnp  (i,j)  + pemnp  (i,j)  / onem ! sal flx interpreted as EMNP
+#if defined(ICE) || defined(ICESTATE)
+         da%hice(i,j)= da%hice(i,j)+ hicem(i,j)
+         da%fice(i,j)= da%fice(i,j)+ ficem(i,j)
+         da%hsnw(i,j)= da%hsnw(i,j)+ hsnwm(i,j)
+         da%srfalb  (i,j) = da%srfalb  (i,j)+ surf_albedo_sum(i,j)  ! Average albedo (surface average)
+         da%htndncy  (i,j) = 
+     &      da%htndncy  (i,j)+ delta_icevol(i,j)/baclin  ! Average albedo (surface average)
+#endif
+#if defined(EVP)
+         da%uice(i,j)= da%uice(i,j)+ iceu(i,j)
+         da%vice(i,j)= da%vice(i,j)+ icev(i,j)
+         da%wice(i,j)= da%wice(i,j)+ icev(i,j)**2 + iceu(i,j)**2
+         da%tauxice(i,j)= da%tauxice(i,j)+icestrocnx(i,j)
+         da%tauyice(i,j)= da%tauyice(i,j)+icestrocny(i,j)
+#endif
+      end do
+      end do
+      end do
+c
+c --- Augment counter
+      da_counter=da_counter+1
+cdiag print *,'daily_ave_add after 2D flds -- mnproc=', mnproc
+cdiag print *,'Exiting daily_ave_add mnproc=',mnproc
+      end subroutine daily_ave_add
+c
+c
+C --- --------------------------------------------------
+C --- Routine initializes da fields
+C --- --------------------------------------------------
+      subroutine daily_ave_ini(da)
+      implicit none
+      type(daily_averages), intent(out) :: da
+      integer :: i,j,k,kbio
+
+      do k=1,kdm
+!$OMP PARALLEL DO PRIVATE(j,i)
+!$OMP& SCHEDULE(STATIC,jblk)
+         do j=1-margin,jj+margin
+         do i=1-margin,ii+margin
+            da%s(i,j,k) = 0.
+            da%t(i,j,k) = 0.
+            da%p(i,j,k) = 0.
+            da%u(i,j,k) = 0.
+            da%v(i,j,k) = 0.
+            da%w(i,j,k) = 0.
+         end do
+         end do
+      end do
+#if defined (ECOSYS)
+      do kbio=1,nbio
+      do k=1,kdm
+!$OMP PARALLEL DO PRIVATE(j,i)
+!$OMP& SCHEDULE(STATIC,jblk)
+         do j=1-margin,jj+margin
+         do i=1-margin,ii+margin
+            da%bio_ave(i,j,k,kbio) = 0.
+         end do
+         end do
+!OMP END PARALLEL DO
+      end do
+      end do
+#endif 
+c
+!$OMP PARALLEL DO PRIVATE(j,i)
+!$OMP& SCHEDULE(STATIC,jblk)
+      do j=1-margin,jj+margin
+      do i=1-margin,ii+margin
+         da%vb      (i,j)  = 0.
+         da%ub      (i,j)  = 0.
+         da%ssh     (i,j)  = 0.
+#if defined (DAILY_ENSVAR)
+         da%ssh_sq   (i,j)  = 0.
+         da%fice_sq  (i,j)  = 0.
+         da%hice_sq  (i,j)  = 0.
+#endif
+
+         da%taux    (i,j)  = 0.
+         da%tauy    (i,j)  = 0.
+         da%heatflux(i,j)  = 0.
+         da%swflx   (i,j)  = 0.
+         da%salflx  (i,j)  = 0.
+         da%emnp    (i,j)  = 0.
+#if defined(ICE) || defined(ICESTATE)
+         da%hice(i,j)= 0.
+         da%fice(i,j)= 0.
+         da%hsnw(i,j)= 0.
+         da%srfalb(i,j)= 0.
+         da%htndncy(i,j)= 0.
+         da%srfheatflux(i,j)= 0.
+#endif
+#if defined(EVP)
+         da%uice(i,j)= 0.
+         da%vice(i,j)= 0.
+         da%wice(i,j)= 0.
+         da%tauxice(i,j)= 0.
+         da%tauyice(i,j)= 0.
+#endif
+      end do
+      end do
+c
+      da_counter=0
+      end subroutine daily_ave_ini
+
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+C --- --------------------------------------------------
+C --- Dumping of average fields -- with a crude implementation 
+C --- of a file lock
+C --- --------------------------------------------------
+      subroutine daily_ave_dump(da,rungen,rt,imem,yrflag)
+      implicit none
+      type (daily_averages),intent(inout) :: da
+      character(len=3),     intent(in)    :: rungen
+      type(year_info),      intent(in)    :: rt
+      integer,              intent(in)    :: imem
+      integer,              intent(in)    :: yrflag
+
+      integer ::j,iostat,lmem(1000),numtries
+      character(len=80) :: lockname
+      type (daily_averages) :: da_tmp
+      logical :: ex,ex2,islocked
+      character(len=60) :: filenamea,filenameb
+      integer*4, parameter :: sleeptime=2
+      character(len=4) :: csleep
+#if defined (EVP_DRIFT_ASSIMILATION)
+      character(len=60) :: ficedrft
+      integer :: irecl
+      real*4, dimension(itdm,jtdm) :: dmpu,dmpv
+      real  , dimension(itdm,jtdm) :: tmpuv
+#endif
+#if defined(MPI)
+      include 'mpif.h'
+      integer :: mpierr 
+#elif defined (SHMEM)
+      include 'mpp/shmem.fh'
+      INTEGER, save :: PSYNC(SHMEM_REDUCE_SYNC_SIZE)
+      INTEGER, save :: PWRK(MAX(1/2+1,SHMEM_REDUCE_MIN_WRKDATA_SIZE))
+      integer, save :: ios,iosall
+#endif
+
+#if ! defined (SHMEM)
+      integer :: ios,iosall
+#endif
+
+      ! File locking should be handled by unix system calls, but
+      ! for now ... this works...
+
+      ! Divide by counter
+      !da=da/da_counter --- dont use module procedures ....
+      call da_div_int(da,da_counter)
+
+      ! Divide by dp
+      !print *,'daily_ave_dump: div_dp', mnproc
+      call da_div_dp(da)
+
+      ! Get average
+      da%lmem    = 0 ; da%lmem(imem) = 1
+      lmem=da%lmem
+      da%nrmem   = 1  ! By default, we have one member pr record
+      da%rtinit  = da_rtinit
+      da%rtdump  = rt
+
+      ! Generate file lock
+      lockname=trim(dailyfilebase(da,rungen))//'.lock'
+      filenamea=trim(dailyfilebase(da,rungen))//'.a'
+      filenameb=trim(dailyfilebase(da,rungen))//'.b'
+      !print *,da%rtdump%cyy
+      !print *,da%rtdump%cdd
+      !print *,lockname
+      !stop
+
+#if defined (EVP_DRIFT_ASSIMILATION)
+      ! This is needed to produce drift trajectories
+      ! from the EVP model
+      ficedrft=trim(dailyfilebase(da,rungen))//
+     &   '_ICEDRIFT.uf'
+
+      call xcaget(tmpuv,da%uice,0) ; dmpu=tmpuv
+      call xcaget(tmpuv,da%vice,0) ; dmpv=tmpuv
+
+      if (mnproc==1) then
+         print *,'Dumping EVP drift for assimilation'
+         inquire(iolength=irecl)dmpu,dmpv
+         open(20,file=trim(ficedrft),status='unknown',
+     &           form='unformatted',recl=irecl,access='direct')
+
+         ! Always overwrite
+         write(20,rec=imem) dmpu, dmpv
+         close(20)
+      end if
+#endif
+
+
+      ! Crude file locking mechanism -- holds until lock file is removed 
+      ! NB: lock file is common for ice/hycom/bio writes
+      islocked=.true.
+      numtries=0
+      if (mnproc==1) then
+         print *,filenamea
+         print *,filenameb
+         print *,da%rtinit
+         print *,da%rtdump
+         write (lp,'(a)')'daily_ave_dump: Waiting for file lock...'
+         write (lp,'(a)')'daily_ave_dump: lockfile is '//trim(lockname)
+      end if
+
+      do while (islocked)
+
+         numtries=numtries+1
+
+         if (numtries>5) then
+            if (mnproc==1) then
+            write (lp,'(a,i5,a)') 'daily_ave_dump:'//
+     &      ' Tried ',numtries,' times but no success'//
+     &      ' in opening lockfile. Write for this member is skipped '
+            end if
+            return
+         end if
+
+         ! If file lock exists, file is in use by other executable
+         call xcsync(flush_lp)
+         inquire(exist=islocked,file=trim(lockname))
+         call xcsync(flush_lp)
+
+
+         ! If file exists -- go back to start
+         if (islocked) then
+            if (mnproc==1) then
+               write (lp,'(a,i4)')'daily_ave_dump:'//
+     &         ' Waiting for file lock.. attempt number ', numtries
+            end if
+
+            ! call system sleep ...
+            !KAL - write(csleep,'(i3)') sleeptime
+            !KAL - call system('sleep '//csleep)
+            !KAL - Cray doesnt handle system calls - use sleep subroutine 
+            !KAL - in stead (not Fortran standard - but usually available
+            !KAL - as a "helper" routine
+#if defined(AIX)
+            call sleep_(sleeptime)
+#else
+            call sleep(sleeptime)
+#endif
+            cycle
+         end if
+         !print *,'mod_daily_average aft  cycle if',mnproc,islocked
+
+         ! If file doesnt exist, prepare for writing
+         ios=0
+         if (mnproc==1) 
+     &      open (11,file=trim(lockname),status='new',iostat=ios)
+#if defined(MPI)
+         call mpi_allreduce(ios,iosall,1,MPI_INTEGER,MPI_SUM,
+     &                      mpi_comm_world,mpierr)
+         ios=iosall
+#elif defined (SHMEM)
+         call shmem_int8_sum_to_all(iosall,ios,0,0,N$PES,PWRK,PSYNC)
+         ios=iosall
+#endif
+         if (ios/=0) then
+            islocked =.true. ! Stay in loop
+            if (mnproc==1) then
+               write (lp,'(a,i4)')'daily_ave_dump:'//
+     &         ' Rechecking file lock.. attempt number ', numtries
+            end if
+
+            !KAL - write(csleep,'(i3)') sleeptime
+            !KAL - call system('sleep '//csleep)
+            !KAL - Cray doesnt handle system calls - use sleep subroutine 
+            !KAL - in stead (not Fortran standard - but usually available
+            !KAL - as a "helper" routine
+#if defined(AIX)
+            call sleep_(sleeptime)
+#else
+            call sleep(sleeptime)
+#endif
+            cycle
+
+         else
+            islocked=.false.
+         end if
+
+
+      end do
+
+               
+      ! At this stage the file should be free of locks, and
+      ! we are ready for reading/writing
+
+      if (mnproc==1) then
+         write(11,'(i4)') imem
+      end if
+
+      ! Find unformatted file(s) -- this finds the .b-file
+      inquire(exist=ex2,file=trim(filenameb))
+
+      ! Must be in sync brefore proceeding
+      call xcsync(flush_lp)
+
+
+      ! If old file, we must read data from it
+      ! Override if daily_accum is switched off
+      if (ex2.and.l_daily_accum) then
+         if(mnproc==1)write(lp,'(a)') 'daily_ave_dump: File exists'
+
+         ! Initialize da_tmp time records
+         da_tmp%rtinit=da%rtinit
+         da_tmp%rtdump=da%rtdump
+         call daily_ave_read(da_tmp,rungen,yrflag)
+
+         ! NB -- lmem holds members we have dumped. If 
+         ! lmem is not equal to 0, we have already dumped it.
+         ! In that case skip writing. 
+         ! (This comes in handy for a restart etc...)
+         if (da_tmp%lmem(imem) == 0 ) then
+            if (mnproc==1)
+     &         write(*,'(a)')'daily_ave_dump: Adding to existing member'
+            !da=da+da_tmp
+            call da_plus_da(da,da_tmp)
+            lmem=da%lmem
+            call daily_ave_save(da,rungen)
+         else
+            if (mnproc==1)
+     &         write(lp,'(a)') 'daily_ave_dump: WARNING this '//
+     &              ' member already dumped -- item skipped'
+            lmem=da_tmp%lmem
+         end if
+
+      ! New file  first write
+      else
+         if (mnproc==1 .and. .not. ex2) 
+     &      write(lp,'(a)') 'daily_ave_dump: File does not exist'
+         if (mnproc==1 .and. .not. l_daily_accum) 
+     &      write(lp,'(a)') 'daily_ave_dump: Accumulation is off'
+         lmem=da%lmem
+         call daily_ave_save(da,rungen)
+      end if
+
+      ! Close lock file
+      if (mnproc==1) then
+         close(11)
+         write(lp,'(a,i4)')'daily_ave_dump:Total number of members ',
+     &         sum(lmem)
+      end if
+
+      ! When finished -- remove lockfile
+      if (mnproc==1) then
+        !KAL call system("rm "//trim(lockname))
+        !KAL Cray doesnt like the "system" command
+        call unlink_wrap(trim(lockname)//char(0))
+        write(lp,'(a,21i2)') 
+     &    'daily_ave_dump: lmem around this member:',
+     &    lmem( (max(1,imem-10)):min(imem+10,1000))
+      end if
+
+      end subroutine daily_ave_dump
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!!!!!!!!!!! Interface operators !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!! Interface operator, defines division of daily averages by integer. Note
+!! how time variables, lmem and nrmem are treated
+!
+      !interface operator (/)
+      !   module procedure da_div_int
+      !end interface
+      !function da_div_int(da_in,divisor)
+      !type(daily_averages) :: da_div_int
+      !type(daily_averages), intent(in) :: da_in
+      !integer             , intent(in) :: divisor
+
+      subroutine da_div_int(da,divisor)
+      implicit none
+      type(daily_averages), intent(inout) :: da
+      integer             , intent(in   ) :: divisor
+
+      integer :: i,j,k,kbio
+
+      !NB ... This is the only way this is handled yet...
+      !da%rtinit=da%rtinit
+      !da%rtdump=da%rtdump
+      !da%lmem  =da%lmem  
+      !da%nrmem =da%nrmem 
+
+      !print *,'da_div_int'
+
+      do k=1,kdm
+      do j=1-margin,jj+margin
+      do i=1-margin,ii+margin
+         da%s(i,j,k)       = da%s(i,j,k) /divisor
+         da%t(i,j,k)       = da%t(i,j,k) /divisor
+         da%p(i,j,k)       = da%p(i,j,k) /divisor
+         da%u(i,j,k)       = da%u(i,j,k) /divisor 
+         da%v(i,j,k)       = da%v(i,j,k) /divisor 
+         da%w(i,j,k)       = da%w(i,j,k) /divisor 
+      end do
+      end do
+      end do
+
+#if defined (ECOSYS)
+      do kbio=1,nbio
+      do k=1,kdm
+      do j=1-margin,jj+margin
+      do i=1-margin,ii+margin
+            da%bio_ave(i,j,k,kbio)=
+     &      da%bio_ave(i,j,k,kbio) / divisor
+      end do
+      end do
+      end do
+      end do
+#endif /* ECOSYS */
+
+
+
+      do j=1-margin,jj+margin
+      do i=1-margin,ii+margin
+         da%ub      (i,j)= da%ub      (i,j)/divisor
+         da%vb      (i,j)= da%vb      (i,j)/divisor
+         da%ssh     (i,j)= da%ssh     (i,j)/divisor
+#if defined (DAILY_ENSVAR)
+         da%ssh_sq  (i,j)= da%ssh_sq  (i,j)/divisor
+         da%fice_sq (i,j)= da%fice_sq (i,j)/divisor
+         da%hice_sq (i,j)= da%hice_sq (i,j)/divisor
+#endif
+         da%heatflux(i,j)= da%heatflux(i,j)/divisor
+         da%swflx   (i,j)= da%swflx   (i,j)/divisor
+         da%salflx  (i,j)= da%salflx  (i,j)/divisor
+         da%emnp    (i,j)= da%emnp    (i,j)/divisor
+         da%taux    (i,j)= da%taux    (i,j)/divisor
+         da%tauy    (i,j)= da%tauy    (i,j)/divisor
+
+#if defined(ICE) || defined(ICESTATE)
+         da%fice       (i,j)= da%fice       (i,j)/divisor
+         da%hice       (i,j)= da%hice       (i,j)/divisor
+         da%hsnw       (i,j)= da%hsnw       (i,j)/divisor
+         da%srfalb     (i,j)= da%srfalb     (i,j)/divisor
+         da%htndncy    (i,j)= da%htndncy    (i,j)/divisor
+         da%srfheatflux(i,j)= da%srfheatflux(i,j)/divisor
+#endif
+#if defined(EVP)
+         da%uice      (i,j)= da%uice   (i,j)  /divisor
+         da%vice      (i,j)= da%vice   (i,j)  /divisor
+         da%wice      (i,j)= da%wice   (i,j)  /divisor
+         da%tauxice   (i,j)= da%tauxice(i,j)  /divisor
+         da%tauyice   (i,j)= da%tauyice(i,j)  /divisor
+#endif
+      end do
+      end do
+      end subroutine da_div_int
+
+
+      subroutine da_div_dp(da_in)
+      implicit none
+      type(daily_averages), intent(inout) :: da_in
+      real :: tdp
+      integer :: lastmass(1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy)
+      integer i,j,k,l,klast,kbio
+
+      include 'common_blocks.h'
+
+
+      ! Calc dp field
+      lastmass=0
+      do k=1,kdm
+!$OMP PARALLEL DO PRIVATE(j,l,i,tdp,klast)
+!$OMP&         SCHEDULE(STATIC,jblk)
+         do j=1-margin,jj+margin
+         do l=1,isp(j)
+         do i=max(1-margin,ifp(j,l)),min(ilp(j,l),ii+margin)
+
+            klast=lastmass(i,j)
+
+            if (k==1) then
+               tdp= da_in%p(i,j,k) 
+            else
+               tdp= da_in%p(i,j,k)-da_in%p(i,j,k-1) 
+            end if
+
+            da_in%s(i,j,k)= da_in%s(i,j,k)/(tdp+onemm)
+            da_in%t(i,j,k)= da_in%t(i,j,k)/(tdp+onemm)
+            da_in%u(i,j,k)= da_in%u(i,j,k)/(tdp+onemm) 
+            da_in%v(i,j,k)= da_in%v(i,j,k)/(tdp+onemm) 
+            da_in%w(i,j,k)= da_in%w(i,j,k)/(tdp+onemm) 
+
+            if (tdp<tencm .and. klast>0) then
+               ! Fill with sensible values
+               da_in%s(i,j,k)=da_in%s(i,j,klast)
+               da_in%t(i,j,k)=da_in%t(i,j,klast)
+               da_in%u(i,j,k)=da_in%u(i,j,klast)
+               da_in%v(i,j,k)=da_in%v(i,j,klast)
+               da_in%w(i,j,k)=da_in%w(i,j,klast)
+            elseif (tdp<tencm .and. klast==0) then
+               ! Fill with zarooo values
+               da_in%s(i,j,k)=0.
+               da_in%t(i,j,k)=0.
+               da_in%u(i,j,k)=0.
+               da_in%v(i,j,k)=0.
+               da_in%w(i,j,k)=0.
+            else
+               ! Values already ok, and this is a mass-
+               ! containing layer
+               lastmass(i,j)=k
+            end if
+
+
+         end do
+         end do
+         end do
+      end do
+
+
+#if defined (ECOSYS)
+      do kbio=1,nbio
+      do k=1,kdm
+!$OMP PARALLEL DO PRIVATE(j,l,i,tdp)
+!$OMP&         SCHEDULE(STATIC,jblk)
+         do j=1-margin,jj+margin
+         do l=1,isp(j)
+         do i=max(1-margin,ifp(j,l)),min(ilp(j,l),ii+margin)
+
+            if (k==1) then
+               tdp= da_in%p(i,j,k) 
+            else
+               tdp= da_in%p(i,j,k)-da_in%p(i,j,k-1) 
+            end if
+
+            if (k>=lastmass(i,j)) then
+               da_in%bio_ave(i,j,k,kbio)=
+     &         da_in%bio_ave(i,j,k,kbio) / (tdp+onemm)
+            end if
+         end do
+         end do
+         end do
+!$OMP END PARALLEL DO
+      end do
+      end do
+#endif /* ECOSYS */
+      end subroutine da_div_dp
+
+
+
+
+!interface operator (+)
+!   module procedure da_plus_da
+!end interface
+      !function da_plus_da(da1,da2)
+      !type(daily_averages) :: da_plus_da
+      !type(daily_averages), intent(in) :: da1,da2
+
+      subroutine da_plus_da(da1,da2)
+      implicit none
+      type(daily_averages), intent(inout) :: da1
+      type(daily_averages), intent(in   ) :: da2
+
+      integer :: i,j,k, kbio
+
+ 
+      if (da1%rtinit%iyy == da2%rtinit%iyy  .and. 
+     &    da1%rtinit%idd == da2%rtinit%idd) then
+         da1%rtinit   = da1%rtinit 
+      else
+         print *,'(Error on da adding rtinit)'
+         print *,da1%rtinit%iyy,da1%rtinit%idd
+         print *,da2%rtinit%iyy,da2%rtinit%idd
+         stop '(da_plus_da)'
+      end if
+ 
+      if (da1%rtdump%iyy == da2%rtdump%iyy  .and. 
+     &    da1%rtdump%idd == da2%rtdump%idd) then
+         da1%rtdump   = da1%rtdump 
+      else
+         print *,'(Error on da adding rtdump)'
+         print *,da1%rtdump%iyy,da1%rtdump%idd
+         print *,da2%rtdump%iyy,da2%rtdump%idd
+         stop '(da_plus_da)'
+      end if
+
+      da1%nrmem   = da1%nrmem   + da2%nrmem
+      da1%lmem    = da1%lmem    + da2%lmem 
+
+      do k=1,kdm
+      do j=1-margin,jj+margin
+      do i=1-margin,ii+margin
+         da1%s(i,j,k)       = da1%s(i,j,k) + da2%s(i,j,k)
+         da1%t(i,j,k)       = da1%t(i,j,k) + da2%t(i,j,k)
+         da1%p(i,j,k)       = da1%p(i,j,k) + da2%p(i,j,k)
+         da1%u(i,j,k)       = da1%u(i,j,k) + da2%u(i,j,k)
+         da1%v(i,j,k)       = da1%v(i,j,k) + da2%v(i,j,k)
+         da1%w(i,j,k)       = da1%w(i,j,k) + da2%w(i,j,k)
+      end do
+      end do
+      end do
+
+#if defined (ECOSYS)
+      do kbio=1,nbio
+      do k=1,kdm
+      do j=1-margin,jj+margin
+      do i=1-margin,ii+margin
+            da1%bio_ave(i,j,k,kbio)=
+     &      da1%bio_ave(i,j,k,kbio)+
+     &      da2%bio_ave(i,j,k,kbio)
+      end do
+      end do
+      end do
+      end do
+#endif /* ECOSYS */
+
+      do j=1-margin,jj+margin
+      do i=1-margin,ii+margin
+         da1%ub      (i,j)= da1%ub      (i,j)+ da2%ub      (i,j)
+         da1%vb      (i,j)= da1%vb      (i,j)+ da2%vb      (i,j)
+         da1%ssh     (i,j)= da1%ssh     (i,j)+ da2%ssh     (i,j)
+#if defined (DAILY_ENSVAR)
+         da1%ssh_sq   (i,j)= da1%ssh_sq   (i,j)+ da2%ssh_sq   (i,j) 
+         da1%fice_sq  (i,j)= da1%fice_sq  (i,j)+ da2%fice_sq  (i,j) 
+         da1%hice_sq  (i,j)= da1%hice_sq  (i,j)+ da2%hice_sq  (i,j) 
+#endif
+         da1%heatflux(i,j)= da1%heatflux(i,j)+ da2%heatflux(i,j)
+         da1%swflx   (i,j)= da1%swflx   (i,j)+ da2%swflx   (i,j)
+         da1%salflx  (i,j)= da1%salflx  (i,j)+ da2%salflx  (i,j)
+         da1%emnp    (i,j)= da1%emnp    (i,j)+ da2%emnp    (i,j)
+         da1%taux    (i,j)= da1%taux    (i,j)+ da2%taux    (i,j)
+         da1%tauy    (i,j)= da1%tauy    (i,j)+ da2%tauy    (i,j)
+
+#if defined(ICE) || defined(ICESTATE)
+         da1%fice       (i,j)=da1%fice (i,j)      +da2%fice(i,j)
+         da1%hice       (i,j)=da1%hice (i,j)      +da2%hice(i,j)
+         da1%hsnw       (i,j)=da1%hsnw (i,j)      +da2%hsnw(i,j)
+         da1%srfalb     (i,j)=da1%srfalb(i,j)     +da2%srfalb(i,j)
+         da1%htndncy    (i,j)=da1%htndncy(i,j)    +da2%htndncy(i,j)
+         da1%srfheatflux(i,j)=da1%srfheatflux(i,j)+da2%srfheatflux(i,j)
+#endif
+#if defined(EVP)
+         da1%uice   (i,j) = da1%uice   (i,j) + da2%uice(i,j)
+         da1%vice   (i,j) = da1%vice   (i,j) + da2%vice(i,j)
+         da1%wice   (i,j) = da1%wice   (i,j) + da2%wice(i,j)
+         da1%tauxice(i,j) = da1%tauxice(i,j) + da2%tauxice(i,j)
+         da1%tauyice(i,j) = da1%tauyice(i,j) + da2%tauyice(i,j)
+#endif
+      end do
+      end do
+      end subroutine da_plus_da
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!!!!!!!!! Input / Output Routines -- private to module    !!!!!!!!!!!!!!!!!
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+      ! This is a new save routine -- uses hycom-type IO
+      subroutine daily_ave_save(da,rungen)
+      use mod_za
+      implicit none
+      type(daily_averages), intent(inout) :: da
+      character(len=3),     intent(in)    :: rungen
+
+      real :: xmin,xmax,xmin2,xmax2,coord
+      integer :: ifld,n,k,nop,kbio
+      character(len=60) :: filenamea,filenameb
+      character(len=8)  :: char8
+      integer :: n2dfld,n3dfld
+      logical :: written
+      real, dimension(1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy) :: tmpfld
+
+      include 'common_blocks.h'
+
+
+      n2dfld=23 ! Set to max possible
+      n3dfld=6
+
+      filenamea=trim(dailyfilebase(da,rungen))//'.a'
+      filenameb=trim(dailyfilebase(da,rungen))//'.b'
+
+      ! Open files .. 
+      nop=711
+      if (mnproc==1) 
+     &   open (unit=nop,file=trim(filenameb),
+     &         status='replace')
+      call zaiopf(trim(filenamea),'replace',nop)
+
+      ! Write .b Header
+      if (mnproc==1) 
+     &   write(nop,116) ctitle,iversn,iexpt,yrflag,itdm,jtdm, 
+     &      kdm,da%rtinit%iyy,da%rtinit%idd,
+     &      da%rtdump%iyy,da%rtdump%idd,
+     &      da%nrmem
+
+      ! Write the local ensemble members into ".b" header
+      if (mnproc==1) then
+         print *,filenamea
+         print *,filenameb
+         print *,da%rtinit
+         print *,da%rtdump
+         do n=1,1000
+             write(nop,118) n,da%lmem(n)
+          end do
+          write(nop,119)
+       end if
+
+       ! 2D fields
+       coord = 0
+       ifld=1
+       do ifld=1,n2dfld
+
+         written = .false.
+
+         ! U - velocity
+         if     (ifld==1) then
+            tmpfld=da%ub
+            char8='ubavg   '
+            written=.true.
+         elseif (ifld==2) then
+            tmpfld=da%vb
+            char8='vbavg   '
+            written=.true.
+         elseif (ifld==3) then
+            tmpfld=da%ssh
+            char8='ssh     '
+            written=.true.
+         elseif (ifld==4) then
+            tmpfld=da%heatflux
+            char8='surflx  '
+            written=.true.
+         elseif (ifld==5) then
+            tmpfld=da%swflx
+            char8='swflx   '
+            written=.true.
+         elseif (ifld==6) then
+            tmpfld=da%salflx
+            char8='salflx  '
+            written=.true.
+         elseif (ifld==7) then
+            tmpfld=da%emnp
+            char8='emnp    '
+            written=.true.
+         elseif (ifld==8) then
+            tmpfld=da%taux
+            char8='taux    '
+            written=.true.
+         elseif (ifld==9) then
+            tmpfld=da%tauy
+            char8='tauy    '
+            written=.true.
+#if defined(ICE) || defined(ICESTATE)
+         elseif (ifld==10) then
+            tmpfld=da%fice
+            char8='fice    '
+            written=.true.
+         elseif (ifld==11) then
+            tmpfld=da%hice
+            char8='hice    '
+            written=.true.
+         elseif (ifld==12) then
+            tmpfld=da%hsnw
+            char8='hsnw    '
+            written=.true.
+         elseif (ifld==13) then
+            tmpfld=da%srfalb
+            char8='albedo  '
+            written=.true.
+         elseif (ifld==14) then
+            tmpfld=da%srfheatflux
+            char8='surflxs '
+            written=.true.
+         elseif (ifld==15) then
+            tmpfld=da%htndncy
+            char8='htndncy '
+            written=.true.
+#endif
+#if defined(EVP)
+         elseif (ifld==16) then
+            tmpfld=da%uice
+            char8='uice    '
+            written=.true.
+         elseif (ifld==17) then
+            tmpfld=da%vice
+            char8='vice    '
+            written=.true.
+         elseif (ifld==18) then
+            tmpfld=da%wice
+            char8='spdice  '
+            written=.true.
+         elseif (ifld==19) then
+            tmpfld=da%tauxice
+            char8='tauxi   '
+            written=.true.
+         elseif (ifld==20) then
+            tmpfld=da%tauyice
+            char8='tauyi   '
+            written=.true.
+#endif
+#if defined (DAILY_ENSVAR)
+         elseif (ifld==21) then
+            tmpfld=da%ssh_sq  
+            char8='ssh_sq  '
+            written=.true.
+         elseif (ifld==22) then
+            tmpfld=da%fice_sq  
+            char8='fice_sq '
+            written=.true.
+         elseif (ifld==23) then
+            tmpfld=da%hice_sq  
+            char8='hice_sq '
+            written=.true.
+#endif
+         end if
+
+         if     (written) then
+            call zaiowr(tmpfld(1-nbdy,1-nbdy),ip,.false.,
+     &                        xmin,xmax, nop, .false.)
+            if     (mnproc.eq.1) then
+               write (nop,117) char8,nstep,time,0,coord,xmin,xmax
+               call flush(nop)
+            end if
+         endif !1st tile
+
+      end do
+
+       ! 3D fields
+       do k=1,kdm
+       coord=sigma(k)
+       do ifld=1,n3dfld
+
+         ! U - velocity
+         if (ifld==1) then
+            call zaiowr(da%u(1-nbdy,1-nbdy,k),iu,.false.,
+     &                        xmin,xmax, nop, .false.)
+            char8='utot    '
+         elseif (ifld==2) then
+            call zaiowr(da%v(1-nbdy,1-nbdy,k),iv,.false.,
+     &                        xmin,xmax, nop, .false.)
+            char8='vtot    '
+         elseif (ifld==3) then
+            call zaiowr(da%s(1-nbdy,1-nbdy,k),ip,.false.,
+     &                        xmin,xmax, nop, .false.)
+            char8='saln    '
+         elseif (ifld==4) then
+            call zaiowr(da%t(1-nbdy,1-nbdy,k),ip,.false.,
+     &                        xmin,xmax, nop, .false.)
+            char8='temp    '
+         elseif (ifld==5) then
+            call zaiowr(da%p(1-nbdy,1-nbdy,k),ip,.false.,
+     &                        xmin,xmax, nop, .false.)
+            char8='pres    '
+         elseif (ifld==6) then
+            call zaiowr(da%w(1-nbdy,1-nbdy,k),ip,.false.,
+     &                        xmin,xmax, nop, .false.)
+            char8='kinetic '
+#if defined (ECOSYS)
+         elseif (ifld>6 .and. ifld <= 6+nbio) then
+#if defined (NOR05)
+            kbio=ifld-6
+            !KAL -- I snagged this from prtsol
+            select case (kbio)
+                case(1)  ; char8='NIT     '   
+                case(2)  ; char8='PHO     '   
+                case(3)  ; char8='SIL     '   
+                case(4)  ; char8='DET     '   
+                case(5)  ; char8='SIS     '   
+                case(6)  ; char8='FLA     '   
+                case(7)  ; char8='DIA     '   
+                case(8)  ; char8='OXY     '   
+                case(9)  ; char8='SED     '   
+                case(10) ; char8='YEL     '   
+            end select
+#endif /* NOR05 */
+            call zaiowr(da%bio_ave(1-nbdy,1-nbdy,k,kbio),ip,.false.,
+     &                        xmin,xmax, nop, .false.)
+#endif /* ECOSYS */
+         end if
+
+         if     (mnproc.eq.1) then
+            write (nop,117) char8,nstep,time,k,coord,xmin,xmax
+            call flush(nop)
+         endif !1st tile
+      end do
+      end do
+
+       call zaiocl(nop)
+       if (mnproc==1) close(nop)
+
+
+ 116  format (a80/a80/a80/a80/
+     & i5,4x,'''iversn'' = hycom version number x10'/
+     & i5,4x,'''iexpt '' = experiment number x10'/
+     & i5,4x,'''yrflag'' = days in year flag'/
+     & i5,4x,'''idm   '' = longitudinal array size'/
+     & i5,4x,'''jdm   '' = latitudinal  array size'/
+     & i5,4x,'''kdm   '' = Vertical     array size'/
+     & i5,4x,'''syear '' = Year of integration start '/
+     & i5,4x,'''sday  '' = Day of integration start'/
+     & i5,4x,'''dyear '' = Year of this dump      '/
+     & i5,4x,'''dday  '' = Day of this dump     '/
+     & i5,4x,'''count '' = Ensemble counter       ')
+C    & 'field       time step  model day',
+C    & '  k  dens        min              max')
+ 117  format (a8,' = ',i11,f11.2,i3,f7.3,1p2e16.7)
+ 118  format ('member ',i5.5,' = ',i1,' Ensemble member flag')
+ 119  format('field         time step  model day',
+     & '  k  dens        min              max')
+
+      end subroutine daily_ave_save
+
+
+      
+      subroutine daily_ave_read(da,rungen,yrflag)
+      use mod_za
+      use mod_year_info
+      implicit none
+      type(daily_averages), intent(inout) :: da
+      character(len=3),     intent(in)    :: rungen
+      integer,              intent(in)    :: yrflag
+
+      real :: xmin,xmax,xmin2,xmax2,coord,loctime
+      integer :: idummy, l_itdm,l_jtdm,l_kdm,k,nop, ios,n,
+     &           locnstep, lociversn, lociexpt, locyrflag,
+     &           kbio
+      character(len=80) :: locctitle(4)
+      character(len=60) :: filenamea,filenameb
+      character(len=8) :: char8
+      logical :: no2dfld,no3dfld
+
+      !include 'common_blocks.h'
+
+
+      filenamea=trim(dailyfilebase(da,rungen))//'.a'
+      filenameb=trim(dailyfilebase(da,rungen))//'.b'
+      !print *,filenamea
+      !print *,filenameb
+      if (mnproc==1) then
+         write(lp,'(a)') 'Reading '//
+     &      trim(dailyfilebase(da,rungen))//'.[ab]'
+         call flush(lp)
+      end if
+
+
+      ! Open files .. 
+      nop=710
+      open (unit=nop,file=trim(filenameb),
+     &      status='old')
+      call zaiopf(trim(filenamea),'old',nop)
+
+      ! Read .b Header
+      read(nop,116) locctitle,lociversn,lociexpt,locyrflag,
+     &   l_itdm,l_jtdm, 
+     &   l_kdm,da%rtinit%iyy,da%rtinit%idd,
+     &   da%rtdump%iyy,da%rtdump%idd,da%nrmem
+
+C     ! Fill all da fields
+C     call year_day(real(da%rtdump%idd,kind=8),
+C    &   da%rtdump%iyy,da%rtdump,rforce)
+C     call year_day(real(da%rtinit%idd,kind=8),
+C    &   da%rtinit%iyy,da%rtinit,rforce)
+      call year_day(real(da%rtdump%idd,kind=8),
+     &   da%rtdump%iyy,da%rtdump,yrflag,.true.)
+      call year_day(real(da%rtinit%idd,kind=8),
+     &   da%rtinit%iyy,da%rtinit,yrflag,.true.)
+      !print *,da%rtdump%idd
+      !print *,da%rtdump%idm
+      !print *,da%rtdump%imm
+      !print *,da%rtdump%iyy
+      !print *
+      !print *,da%rtinit%idd
+      !print *,da%rtinit%idm
+      !print *,da%rtinit%imm
+      !print *,da%rtinit%iyy
+
+
+      if (l_itdm/=itdm.and.l_jtdm/=jtdm.and.l_kdm/=kdm) then
+         Print *,'Grid dimensions are wrong!!!'
+         call xcstop ('(daily_read_ave)')
+         stop         '(daily_read_ave)'
+      end if
+
+      ! Read the local ensemble members into ".b" header
+      do n=1,1000
+          read(nop,118) idummy,da%lmem(n)
+       end do
+       read(nop,119)
+
+       ! Start reading fields
+       ios=0
+       do while (ios==0)
+          read (nop,117,iostat=ios) char8,locnstep,loctime,
+     &                              k,coord,xmin2,xmax2
+          no2dfld=.false.
+          no3dfld=.false.
+          kbio=0
+          !print *,char8,locnstep,loctime,k,ios
+
+          if (ios==0) then
+          ! Put fields into its place:
+          !2D fields
+          if (k==0) then
+             if      (adjustl(trim(char8))=='ubavg') then
+               call zaiord(da%ub(1-nbdy,1-nbdy),iu,.false.,
+     &                           xmin,xmax, nop)
+             else if (adjustl(trim(char8))=='vbavg') then
+               call zaiord(da%vb(1-nbdy,1-nbdy),iv,.false.,
+     &                           xmin,xmax, nop)
+             else if (adjustl(trim(char8))=='ssh'  ) then
+               call zaiord(da%ssh(1-nbdy,1-nbdy),ip,.false.,
+     &                           xmin,xmax, nop)
+#if defined (DAILY_ENSVAR)
+             else if (adjustl(trim(char8))=='ssh_sq'  ) then
+               call zaiord(da%ssh_sq(1-nbdy,1-nbdy),ip,.false.,
+     &                           xmin,xmax, nop)
+             else if (adjustl(trim(char8))=='fice_sq'  ) then
+               call zaiord(da%fice_sq(1-nbdy,1-nbdy),ip,.false.,
+     &                           xmin,xmax, nop)
+             else if (adjustl(trim(char8))=='hice_sq'  ) then
+               call zaiord(da%hice_sq(1-nbdy,1-nbdy),ip,.false.,
+     &                           xmin,xmax, nop)
+#endif
+             else if (adjustl(trim(char8))=='surflx') then
+               call zaiord(da%heatflux(1-nbdy,1-nbdy),ip,.false.,
+     &                           xmin,xmax, nop)
+             else if (adjustl(trim(char8))=='swflx') then
+               call zaiord(da%swflx(1-nbdy,1-nbdy),ip,.false.,
+     &                           xmin,xmax, nop)
+             else if (adjustl(trim(char8))=='salflx') then
+               call zaiord(da%salflx(1-nbdy,1-nbdy),ip,.false.,
+     &                           xmin,xmax, nop)
+             else if (adjustl(trim(char8))=='emnp') then
+               call zaiord(da%emnp(1-nbdy,1-nbdy),ip,.false.,
+     &                           xmin,xmax, nop)
+             else if (adjustl(trim(char8))=='taux') then
+               call zaiord(da%taux(1-nbdy,1-nbdy),ip,.false.,
+     &                           xmin,xmax, nop)
+             else if (adjustl(trim(char8))=='tauy') then
+               call zaiord(da%tauy(1-nbdy,1-nbdy),ip,.false.,
+     &                           xmin,xmax, nop)
+#if defined (ICE) || defined(ICESTATE)
+             else if (adjustl(trim(char8))=='fice') then
+               call zaiord(da%fice(1-nbdy,1-nbdy),ip,.false.,
+     &                            xmin,xmax, nop)
+             else if (adjustl(trim(char8))=='hice') then
+               call zaiord(da%hice(1-nbdy,1-nbdy),ip,.false.,
+     &                           xmin,xmax, nop)
+             else if (adjustl(trim(char8))=='hsnw') then
+               call zaiord(da%hsnw(1-nbdy,1-nbdy),ip,.false.,
+     &                           xmin,xmax, nop)
+             else if (adjustl(trim(char8))=='surflxs') then
+               call zaiord(da%srfheatflux(1-nbdy,1-nbdy),ip,.false.,
+     &                           xmin,xmax, nop)
+             else if (adjustl(trim(char8))=='albedo') then
+               call zaiord(da%srfalb(1-nbdy,1-nbdy),ip,.false.,
+     &                           xmin,xmax, nop)
+             else if (adjustl(trim(char8))=='htndncy') then
+               call zaiord(da%htndncy(1-nbdy,1-nbdy),ip,.false.,
+     &                           xmin,xmax, nop)
+#endif
+#if defined(EVP)
+             else if (adjustl(trim(char8))=='uice') then
+               call zaiord(da%uice(1-nbdy,1-nbdy),ip,.false.,
+     &                           xmin,xmax, nop)
+             else if (adjustl(trim(char8))=='vice') then
+               call zaiord(da%vice(1-nbdy,1-nbdy),ip,.false.,
+     &                           xmin,xmax, nop)
+             else if (adjustl(trim(char8))=='spdice') then
+               call zaiord(da%wice(1-nbdy,1-nbdy),ip,.false.,
+     &                           xmin,xmax, nop)
+             else if (adjustl(trim(char8))=='tauxi  ') then
+               call zaiord(da%tauxice(1-nbdy,1-nbdy),ip,.false.,
+     &                           xmin,xmax, nop)
+             else if (adjustl(trim(char8))=='tauyi  ') then
+               call zaiord(da%tauyice(1-nbdy,1-nbdy),ip,.false.,
+     &                           xmin,xmax, nop)
+#endif
+             else
+                no2dfld=.true.
+             end if
+          !3D fields
+          else if (k<=kdm .and. k>0) then
+
+             if      (adjustl(trim(char8))=='utot') then
+               call zaiord(da%u(1-nbdy,1-nbdy,k),iu,.false.,
+     &                           xmin,xmax, nop)
+             else if (adjustl(trim(char8))=='vtot') then
+               call zaiord(da%v(1-nbdy,1-nbdy,k),iv,.false.,
+     &                           xmin,xmax, nop)
+             else if (adjustl(trim(char8))=='saln'  ) then
+               call zaiord(da%s(1-nbdy,1-nbdy,k),ip,.false.,
+     &                           xmin,xmax, nop)
+             else if (adjustl(trim(char8))=='temp') then
+               call zaiord(da%t(1-nbdy,1-nbdy,k),ip,.false.,
+     &                           xmin,xmax, nop)
+             else if (adjustl(trim(char8))=='pres') then
+               call zaiord(da%p(1-nbdy,1-nbdy,k),ip,.false.,
+     &                           xmin,xmax, nop)
+             else if (adjustl(trim(char8))=='kinetic') then
+               call zaiord(da%w(1-nbdy,1-nbdy,k),ip,.false.,
+     &                           xmin,xmax, nop)
+#if defined (ECOSYS)
+#if defined (NOR05)
+            elseif (adjustl(trim(char8))=='NIT') then
+               kbio=1
+               call zaiord(da%bio_ave(1-nbdy,1-nbdy,k,kbio),ip,.false.,
+     &                      xmin,xmax, nop)
+            elseif (adjustl(trim(char8))=='PHO') then
+               kbio=2
+               call zaiord(da%bio_ave(1-nbdy,1-nbdy,k,kbio),ip,.false.,
+     &                      xmin,xmax, nop)
+            elseif (adjustl(trim(char8))=='SIL') then
+               kbio=3
+               call zaiord(da%bio_ave(1-nbdy,1-nbdy,k,kbio),ip,.false.,
+     &                      xmin,xmax, nop)
+            elseif (adjustl(trim(char8))=='DET') then
+               kbio=4
+               call zaiord(da%bio_ave(1-nbdy,1-nbdy,k,kbio),ip,.false.,
+     &                      xmin,xmax, nop)
+            elseif (adjustl(trim(char8))=='SIS') then
+               kbio=5
+               call zaiord(da%bio_ave(1-nbdy,1-nbdy,k,kbio),ip,.false.,
+     &                      xmin,xmax, nop)
+            elseif (adjustl(trim(char8))=='FLA') then
+               kbio=6
+               call zaiord(da%bio_ave(1-nbdy,1-nbdy,k,kbio),ip,.false.,
+     &                      xmin,xmax, nop)
+            elseif (adjustl(trim(char8))=='DIA') then
+               kbio=7
+               call zaiord(da%bio_ave(1-nbdy,1-nbdy,k,kbio),ip,.false.,
+     &                      xmin,xmax, nop)
+            elseif (adjustl(trim(char8))=='OXY') then
+               kbio=8
+               call zaiord(da%bio_ave(1-nbdy,1-nbdy,k,kbio),ip,.false.,
+     &                      xmin,xmax, nop)
+            elseif (adjustl(trim(char8))=='SED') then
+               kbio=9
+               call zaiord(da%bio_ave(1-nbdy,1-nbdy,k,kbio),ip,.false.,
+     &                      xmin,xmax, nop)
+            elseif (adjustl(trim(char8))=='YEL') then
+               kbio=10
+               call zaiord(da%bio_ave(1-nbdy,1-nbdy,k,kbio),ip,.false.,
+     &                      xmin,xmax, nop)
+#endif /* NOR05 */
+#endif /* ECOSYS */
+             else
+                no3dfld=.true.
+            end if
+         else
+            if (mnproc==1) then
+               write(lp,'(a)') 'Illegal specification of k'
+            end if
+            call xcstop('(daily_read_ave)')
+            stop        '(daily_read_ave)'
+         end if
+
+         ! Sanity check:
+         if (no2dfld.and.no3dfld) then
+            if (mnproc==1) then
+               write(lp,'(a)') 'No flds corresponding to ',
+     &            adjustl(trim(char8)), ' found'
+            end if
+            call xcstop('(daily_read_ave)')
+            stop        '(daily_read_ave)'
+         end if
+
+         ! Check for coherency between min and maxes
+         if (abs(xmin-xmin2)>abs(xmin)*1e-4 .or.
+     &       abs(xmax-xmax2)>abs(xmax)*1e-4) then
+            if     (mnproc.eq.1) then
+               write(lp,'(/ a / a,1p3e14.6 / a,1p3e14.6 /)')
+     &           'error - .a and .b files not consistent:',
+     &           '.a,.b min = ',xmin,xmin2 ,xmin2-xmin ,
+     &           '.a,.b max = ',xmax,xmax2 ,xmax2-xmax
+               print *,'Variable :',char8,k
+            endif
+            call xcstop('(read_ave2)')
+            stop '(read_ave2)'
+         end if
+         end if  !ios==0
+       enddo
+
+       call zaiocl(nop)
+       if (mnproc==1) close(nop)
+
+
+
+ 116  format (a80/a80/a80/a80/
+     & i5,4x,'''iversn'' = hycom version number x10'/
+     & i5,4x,'''iexpt '' = experiment number x10'/
+     & i5,4x,'''yrflag'' = days in year flag'/
+     & i5,4x,'''idm   '' = longitudinal array size'/
+     & i5,4x,'''jdm   '' = latitudinal  array size'/
+     & i5,4x,'''kdm   '' = Vertical     array size'/
+     & i5,4x,'''syear '' = Year of integration start '/
+     & i5,4x,'''sday  '' = Day of integration start'/
+     & i5,4x,'''dyear '' = Year of this dump      '/
+     & i5,4x,'''dday  '' = Day of this dump     '/
+     & i5,4x,'''count '' = Ensemble counter       ')
+C    & 'field       time step  model day',
+C    & '  k  dens        min              max')
+ 117  format (a8,' = ',i11,f11.2,i3,f7.3,1p2e16.7)
+ 118  format ('member ',i5.5,' = ',i1,' Ensemble member flag')
+ 119  format('field         time step  model day',
+     & '  k  dens        min              max')
+
+      end subroutine daily_ave_read
+
+
+      function dailyfilebase(da,rungen)
+      type(daily_averages), intent(in) :: da
+      character(len=3)    , intent(in) :: rungen
+      character(len=60) :: dailyfilebase
+
+      dailyfilebase=rungen//'DAILY_'//
+     &   da%rtinit%cyy//'_'//da%rtinit%cdd//'_'//
+     &   da%rtdump%cyy//'_'//da%rtdump%cdd
+      end function dailyfilebase
+#endif
+      end module mod_daily_average

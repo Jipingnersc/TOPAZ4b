@@ -1,0 +1,6 @@
+make montgomery and sshcalc part of the same module?
+Timing options have changed - need to verify thingas are ok
+
+TODO: ice drift in momtum 
+TODO: testing....
+TODO: reintroduce ICESTATE

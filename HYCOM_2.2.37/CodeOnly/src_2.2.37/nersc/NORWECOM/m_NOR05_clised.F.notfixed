@@ -1,0 +1,179 @@
+      module m_NOR05_clised
+
+      contains
+ 
+      subroutine clised(NDATE,ZZ)
+C
+C***BEGIN PROLOGUE CLISED
+C***REVISION DATE 11/8-98
+C       Henrik Soiland, henrik@imr.no
+C       New climatologi for sediments.
+C***PURPOSE CLISED computes the values for SED and YEL
+C       in the fRS zone. Values from Pohlmann and Puls page 380
+C
+C***DESCRIPTION
+C
+C***RELATED ROUTINES : CLIFRS computes FRS-zone values for U,V,S,T and EL
+C
+C***ROUTINES CALLED-NONE
+C***END PROLOGUE
+      use mod_xc
+      use mod_necessary_ecovars
+C
+      implicit none
+C
+C Common variables
+C
+      INTEGER IBALT,JBALT
+      COMMON/IJBALT/IBALT,JBALT
+C
+C   Global variables.
+C
+      INTEGER NDATE(5)
+      REAL ZZ(KB)
+c
+c Sediment Boundary variables
+c
+      REAL SISE10(LB,JM,KB),SISEM0(LB,JM,KB),SISE0N(IM,LB,KB)
+      REAL OXYE10(LB,JM,KB),OXYEM0(LB,JM,KB),OXYE0N(IM,LB,KB)
+      REAL YELE10(LB,JM,KB),YELEM0(LB,JM,KB),YELE0N(IM,LB,KB)
+      REAL SEDE10(LB,JM,KB),SEDEM0(LB,JM,KB),SEDE0N(IM,LB,KB)
+C
+      COMMON/SISEXT/SISE10,SISEM0,SISE0N
+      COMMON/OXYEXT/OXYE10,OXYEM0,OXYE0N
+      COMMON/YELEXT/YELE10,YELEM0,YELE0N
+      COMMON/SEDEXT/SEDE10,SEDEM0,SEDE0N
+C
+      REAL SISSOUTH(KB),OXYSOUTH(KB),YELSOUTH(KB),SEDSOUTH(KB)
+C
+      COMMON/SEDSOUTH/SISSOUTH,OXYSOUTH,YELSOUTH,SEDSOUTH
+C
+C   Local variables.
+C 
+      INTEGER I,J,K,MM10,NM10
+      INTEGER ND(12),LY
+      DATA ND/31,28,31,30,31,30,31,31,30,31,30,31/
+      integer daynr
+      real cnit,cpho,csil,OXYSURF(IM,JM)
+      data cnit/14.01/,cpho/30.97/,csil/28.09/
+c
+      real dyp(25),no2(25),no3(25),po4(25),si(25),zdyp
+      integer nutday,olnday,numlev,lbot,ll
+      REAL   SEDCANAL,YELCANAL,SEDW,YELW,SEDSW,YELSW,
+     &     SEDNW,YELNW,SEDBALT,YELBALT
+C
+C***FIRST EXECUTABLE STATEMENT
+C
+      MM10=IM-LB+1
+      NM10=JM-LB+1
+C
+C   Check on leap year.
+C
+      IF (NDATE(2) .GE. 1 .AND. NDATE(2) .LE. 3) THEN
+         SEDCANAL=1.6
+         YELCANAL=1.6
+         SEDW=0.2
+         YELW=0.
+         SEDSW=0.2
+         YELSW=0.
+         SEDNW=0.2
+         YELNW=0.
+         SEDBALT=1.0
+         YELBALT=0.0
+      ELSE IF (NDATE(2) .GE. 4 .AND. NDATE(2) .LE. 6) THEN
+         SEDCANAL=0.75
+         YELCANAL=0.75
+         SEDW=0.2
+         YELW=0.
+         SEDSW=0.2
+         YELSW=0.
+         SEDNW=0.2
+         YELNW=0.
+         SEDBALT=1.0
+         YELBALT=0.0
+      ELSE IF (NDATE(2) .GE. 7 .AND. NDATE(2) .LE. 9) THEN
+         SEDCANAL=0.65
+         YELCANAL=0.65
+         SEDW=0.2
+         YELW=0.
+         SEDSW=0.2
+         YELSW=0.
+         SEDNW=0.2
+         YELNW=0.
+         SEDBALT=1.0
+         YELBALT=0.0
+      ELSE IF (NDATE(2) .GE. 10 .AND. NDATE(2) .LE. 12) THEN
+         SEDCANAL=1.4
+         YELCANAL=1.4
+         SEDW=0.2
+         YELW=0.
+         SEDSW=0.2
+         YELSW=0.
+         SEDNW=0.2
+         YELNW=0.
+         SEDBALT=1.0
+         YELBALT=0.0
+      ENDIF
+C
+C
+C    3-D BOUNDARY VALUE ARRAYS
+C
+      DO 131 K = 1,KB
+C
+            CALL OXYSAT(OXYSURF,th3d(:,:,k,n),saln(:,:,k,n),
+     &                  temp(:,:,k,n))
+C
+      DO 111 J = 1,JM
+      DO 111 I = 1,LB
+         OXYE10(I,J,K)=OXYSURF(I,J)
+         OXYEM0(I,J,K)=OXYSURF(MM10+I-1,J)
+ 111  CONTINUE
+C
+      DO 121 J = 1,LB
+      DO 121 I = 1,IM
+         OXYE0N(I,J,K)=OXYSURF(I,NM10+J-1)
+ 121  CONTINUE
+C
+      DO  J = 1,34
+      DO  I = 1,LB
+         YELE10(I,J,K)=YELCANAL
+         SEDE10(I,J,K)=SEDCANAL
+      END DO
+      END DO
+C
+      DO  J = 35,JM
+      DO  I = 1,LB
+         YELE10(I,J,K)=YELSW
+         SEDE10(I,J,K)=SEDSW
+      END DO
+      END DO
+C
+      DO  J = 1,JM
+      DO  I = 1,LB
+         YELEM0(I,J,K)=YELNW
+         SEDEM0(I,J,K)=SEDNW
+      END DO
+      END DO
+C
+      DO  J = 1,LB
+      DO  I = 1,IM
+         YELE0N(I,J,K)=YELW
+         SEDE0N(I,J,K)=SEDW
+      END DO
+      END DO
+C
+C  Define Initial and Boundary values at the South .
+C
+         OXYSOUTH(K) = OXYSURF(IBALT,1)
+         YELSOUTH(K) = YELBALT
+         SEDSOUTH(K) = SEDBALT
+C
+ 131  CONTINUE
+C
+C
+C***END CLISED
+C
+      RETURN
+
+      end subrotine clised
+      end module m_NOR05_clised

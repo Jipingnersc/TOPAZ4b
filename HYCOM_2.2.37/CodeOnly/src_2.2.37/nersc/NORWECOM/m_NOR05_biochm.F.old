@@ -1,0 +1,769 @@
+      module m_NOR05_biochm
+
+      contains
+ 
+      subroutine NOR05_biochm(m,n,rt)
+!
+!***BEGIN PROLOGUE BIOLOGY
+!***DATE WRITTEN 
+!***AUTHOR Morten D. Skogen, morten@imr.no
+!***PURPOSE BIOLOGY is the main routine for the chemical/biological and
+!      the sedimentation/resuspension part of NORWECOM
+!***REVISION DATE 9/1-97, MDS
+!      Variable RAD is made 3D, and added concurrent comment to SGI
+!***REVISION DATE 16/6-98, MDS
+!      Extended to version 1.53, i.e. *all* biology is moved from MAIN
+!      to BIOLOGY to improve portability. 
+!***REVISION DATE 2/11-01, MDS
+!      Incoming radiation data GLOBAL is made 2D (earlier one point).
+!      Due to this several other arrays are extended to 2D :
+!      LOW, MAXGLO, MEANGLO, BEAMTR, DIFFTR. This has resulted in changes in
+!      the following routines in the light formulation : COMPRAD, IRRSUR
+!      and TRANS. In addition LOWLIGHT has been included in COMPRAD and is no
+!      longer necessary. Calling sequence to COMPRAD is changed.
+!***REVISION DATE 26/2-02, MDS
+!      Corrected bug, SUMDF, DAYNR and THETA new SAVE variables
+!***REVISION DATE 26/5-04, MDS
+!      Added CHATONELLA module
+!
+!***ROUTINES CALLED : MANY
+!***END PROLOGUE BIOLOGY
+!
+      use mod_xc
+      use mod_year_info
+      use mod_necessary_ecovars
+      use mod_common_ice, only : radfl0,ficem
+      use m_NOR05_affin
+      use m_NOR05_atmnit
+      use m_NOR05_biosun
+      use m_NOR05_botsource
+      use mod_checknan
+      use m_NOR05_comprad  
+      use m_NOR05_deadbot  
+      use m_NOR05_declin   
+      use m_NOR05_detritus 
+      use m_NOR05_irrsur   
+      use m_NOR05_nconservation
+      use m_NOR05_oxysat   
+      use m_NOR05_phyto_growth
+      use m_NOR05_phyto_sed   
+      use m_NOR05_phytosink   
+      use m_NOR05_radiation   
+      use m_NOR05_resusp      
+      use m_NOR05_slim        
+      use m_NOR05_snell       
+      use m_NOR05_source      
+      use m_NOR05_trans       
+      use m_NOR05_wqual    
+
+      implicit none
+
+      include 'sedcom.h'
+      include 'biocom.h'
+      include 'common_blocks.h'
+
+      integer,intent(in) :: m,n
+      type(year_info), intent(in) :: rt
+      
+      real,dimension(kdm) :: dpmm
+      real,dimension(kdm) :: sink,w
+      integer :: daynr
+!CH---defining CC(4) here, to avoid negative oxy at the bottom
+      real :: cc_4 
+!
+!
+! Biology/light
+!
+      real dtib,umol2,phi
+!
+! Sediments
+!
+      real,dimension(1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy):: sissurf,oxysurf,
+     &               yelsurf,sedsurf
+      common/surfsed/sissurf,oxysurf,yelsurf,sedsurf
+!
+! Local variables
+!
+      integer :: i,j,k,icode,dag
+      integer :: kbio,k_k
+      real light,ttime_nor,theta_nor 
+      real,dimension(1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy)::
+     &     kappa,sunti,sunhei,diffus, 
+     &     direct,sumdf
+     &     ,bsed,byel
+      real,dimension(1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy,1:kdm)::source, 
+     &     nmean 
+      real,dimension(1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy,1:kdm,2) ::
+     &     tmp 
+      real,dimension(1:itdm,1:jtdm) :: modlon, modlat
+!#ifdef CHATONELLA
+!      real bcha(im,jm)
+!#endif
+! Local variables used by superbeef
+! New 2D variables 
+      logical,dimension(1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy):: low
+      real,dimension(1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy):: global,
+     &               maxglo,meanglo,beamtr,difftr    
+!
+      logical first
+      data first/.true./
+      save first,nmean,low,global,maxglo,meanglo,beamtr, 
+     &     difftr,sumdf,theta_nor
+     
+      integer :: kmax
+      integer :: ndivis
+      integer :: siad
+      real    :: dayinv
+      real    :: srdia
+      real    :: max_nit,max_pho,max_sil,max_det,max_sis,max_fla,
+     &           max_dia,max_oxy,max_sed,max_yel 
+      real    :: min_nit,min_pho,min_sil,min_det,min_sis,min_fla,
+     &           min_dia,min_oxy,min_sed,min_yel 
+
+      sediment = .true.
+
+      margin=0
+      source(:,:,:)=0.
+!--- Number of internal timesteps per hour      
+      ndivis=3600./biodt_sou
+!--- Inverse day
+      dayinv=1./86400.
+      
+      call xcaget(modlon,plon,0)
+      call xcaget(modlat,plat,0)
+      do j=1-margin,jj+margin
+      do i=1-margin,ii+margin
+      do k=1,kdm
+         dpmm(k)=max(onemm,dp(i,j,k,n))
+      enddo
+      do k=kdm,1,-1
+      if(dpmm(k) .gt. tencm) then
+         exit
+      endif   
+      enddo
+      klist(i,j)=max(k,2)
+      enddo
+      enddo
+      
+CH---Defining CC(4) to be 0 if the concentration of oxygen is low.
+      cc_4=1.52e-7
+      do i=1-margin,ii+margin
+      do j=1-margin,jj+margin
+      do k=1,kdm
+      do kbio=1,nbio
+         call checkneg_pos(bio(i,j,k,n,kbio),i,j,k,kbio,klist(i,j)
+     &    ,'starting neg')
+      enddo
+      enddo
+      enddo
+      enddo
+
+
+
+      
+      !***FIRST EXECUTABLE STATEMENT BIOLOGY
+!
+!
+      if(first)then
+         call NOR05_affin
+         first=.FALSE.
+      end if
+ 
+
+      phi=0.
+      do 401 j=1-margin,jj+margin
+      do 401 i=1-margin,ii+margin
+          kappa(i,j)     = 0.
+          diffus(i,j)    = 0.
+          direct(i,j)    = 0.
+          death_dia(i,j) = 0.
+          death_fla(i,j) = 0.
+!#ifdef CHATONELLA
+!          DEATH_CHA(I,J) = 0.
+!#endif
+ 401  continue
+!
+!   Read new climatologies in the frs-zones every 2'nd day.
+!   Note that if BIVIS.NE.1, this must be syncronized with main program...
+!
+! --- CH:311005: removes this at the moment...
+!      IF (MOD(nstep/ndivis,NDIVIS*48).EQ.0 .OR. nstep/ndivis.EQ.1) THEN
+!         CALL clibio(rt%idd,H,ZZ)
+!         IF(SEDIMENT)THEN
+!            CALL clised(rt%idd,ZZ)
+!         END IF
+!      ENDIF
+!
+!***START light computation
+!
+! Find the declination of the sun and the transmitivity once every day
+! Note that if BIVIS.NE.1, this must be syncronized with main program...
+! --- CH:081105: Something wrong with ndivis/nstep:using bioday instead
+          siad=int(60.0*60.0*24.0/biodt_sou)
+          daynr=rt%idd
+!
+          if (mod(nstep-1,siad)==0) then
+             print*,'calling comprad'
+             global = radfl0*86400 
+             call NOR05_declin(daynr,theta_nor)
+             call NOR05_comprad(daynr,theta_nor,maxglo,meanglo,
+     &               sumdf,biodt_sou,modlon,modlat)
+             call NOR05_trans(daynr,beamtr,difftr,global,low,
+     &                        maxglo,meanglo)
+!             !call nconservation_2_file(daynr,n)
+          endif
+      
+!
+! Phytoplankton death rate
+!
+      call NOR05_detritus(klist,n)
+!
+      call NOR05_wqual(kappa)
+      ttime_nor=real(rt%ihh)+mod(nstep/ndivis,ndivis)/(1.*ndivis)
+!
+      call NOR05_biosun(daynr,ttime_nor,theta_nor,modlon,modlat,
+     &                  sunti,sunhei)
+      call NOR05_irrsur(beamtr,difftr,daynr, 
+     &               diffus,direct,global,low,maxglo,meanglo, 
+     &               sumdf,sunhei,biodt_sou)
+!
+      
+!***END light computation
+!
+!***START primary-production
+!
+      do 691 j=1-margin,jj+margin
+      do 691 i=1-margin,ii+margin
+      kmax=klist(i,j)
+      if(depths(i,j) .gt. 10.)then
+         if(sunhei(i,j).lt.0)then
+            do k=1,kdm
+              rad(i,j,k)=0.
+            enddo
+         elseif(ficem(i,j) > 1e-6) then
+            do k=1,kdm
+              rad(i,j,k)=0.
+            enddo
+         elseif(low(i,j))then
+            call NOR05_radiation(direct(i,j),diffus(i,j),i,j,
+     &        kappa,0.,kmax,n)
+         elseif(global(i,j).eq.0.)then
+            rad(i,j,k)=0.
+         else
+            phi=NOR05_snell(sunhei(i,j))
+            call NOR05_radiation(direct(i,j),diffus(i,j),i,j,
+     &       kappa,phi,kmax,n)
+         endif
+          call NOR05_phyto_growth(i,j,n)
+       endif
+!       if(i==7 .and. j==64) then
+!          do k=1,kdm
+!             print*,'rad is:',rad(i,j,k),k
+!          enddo   
+!       endif
+ 691  continue
+!      !call nconservation('after phytogrowth',n)
+
+!
+!***END primary-production
+!
+!  Find the total mass of the accumulated sediment in each gridpoint
+!
+       if (sediment) then
+          do j=1-margin,jj+margin
+          do i=1-margin,ii+margin
+            kmax=klist(i,j)
+            totsed(i,j)=factw*bio(i,j,kmax,n,9)+detw/niw*
+     &                      bio(i,j,kmax,n,4) 
+     &                    + sisw/siw*bio(i,j,kmax,n,5)+
+     &                      factw*bio(i,j,kmax,n,10)
+          enddo
+          enddo
+       endif
+       print*,'after totsed',bio(1,1,2,n,8)
+!      !call nconservation('after sediment nr 1',n)
+!
+!-----------------------------------------------------------------------
+!***START Adveksjon/diffusjon/synking av plankton og naering
+!-----------------------------------------------------------------------
+!
+! First recompute W for fulfilment of the continuity equation
+! from U and V used by the biology/sediments
+!
+! CH:271005      CALL VERTVL(2.*DTI,IM,JM,kmax,W,U,V,DT,ETF,ETB,scpx,scpy,A,C)
+! CH:271005      CALL BOUND(5,DTE2,scpx,scpy,ELF,ELB,FLUXVA,D, 
+!     &           UAF,VAF,FSM,DUM,DVM,UF,VF,S,T,Q2,Q2L,W,rt%idd)
+! Update some variables used by superbeef advection
+! CH:271005      CALL UPDATEDD(DT,DUM,DVM,DDZ,DUDZ,DVDZ)
+!----------------------------------------
+! Silicate  (SIL) and oxygen (OXY)
+!----------------------------------------
+      icode = 3
+! Source terms
+      call NOR05_source(icode,source,klist,cc_4,n)
+      print*,'bio of  sil',bio(110,75,18:21,n,3)
+      bio(:,:,:,n,3)=bio(:,:,:,n,3)+source(:,:,:)*biodt_sou
+      print*,'source of sil is:',source(110,75,18:21)*biodt_sou
+      if (sediment) then
+         call NOR05_botsource(icode,source,biodt_sou,klist,cc_4,n)
+         do i=1-margin,ii+margin
+         do j=1-margin,jj+margin
+            kmax=klist(i,j)
+            bio(i,j,kmax,n,3)=bio(i,j,kmax,n,3)
+     &                       +source(i,j,kmax)*biodt_sou
+            if(i==110 .and. j==75) then
+               print*,'botsource of sil is:',source(i,j,kmax)
+               print*,'bio of sil',bio(i,j,kmax,n,3)
+            endif
+         enddo
+         enddo
+      endif
+!      !call nconservation('after icode=3',n)
+! Diffusion
+! Update boundary-zone
+!      CALL BIOBOUND(ICODE,rt%ihh)
+!
+! Oxygen
+      
+!       print*,'bio is now:',bio(136,23,1:3,n,3:5)
+!
+      icode = 8
+      call NOR05_source(icode,source,klist,cc_4,n)
+      bio(:,:,:,n,8)=bio(:,:,:,n,8)+source(:,:,:)*biodt_sou
+      if (sediment) then
+         call NOR05_botsource(icode,source,biodt_sou,klist,cc_4,n)
+         do i=1-margin,ii+margin
+         do j=1-margin,jj+margin
+            kmax=klist(i,j)
+            bio(i,j,kmax,n,8)=bio(i,j,kmax,n,8)
+     &                       +source(i,j,kmax)*biodt_sou
+         enddo
+         enddo
+      endif
+!
+! Oxygen saturation at the surface every 24hrs
+!
+      if (mod(nstep/ndivis,ndivis*24).eq.0 ) then
+         call NOR05_oxysat(oxysurf,th3d(:,:,1,n),
+     &        saln(:,:,1,n),temp(:,:,1,n))
+      endif
+!      !call nconservation('after icode=8',n)
+!      CALL BIOBOUND(ICODE,rt%ihh)
+!----------------------------------------
+! Nitrogen og fosfor
+!----------------------------------------
+      icode = 1
+      call NOR05_source(icode,source,klist,cc_4,n)
+      bio(:,:,:,n,1)=bio(:,:,:,n,1)+source(:,:,:)*biodt_sou
+      
+      if (sediment) then
+         call NOR05_botsource(icode,source,biodt_sou,klist,cc_4,n)
+         do i=1-margin,ii+margin
+         do j=1-margin,jj+margin
+            kmax=klist(i,j)
+            bio(i,j,kmax,n,1)=bio(i,j,kmax,n,1)
+     &                       +source(i,j,kmax)*biodt_sou
+         enddo
+         enddo
+      endif
+      call NOR05_atmnit(biodt_sou,n)
+!      CALL BIOBOUND(ICODE,rt%ihh)
+!      !call nconservation('after icode=1',n)
+!
+      icode = 2
+      call NOR05_source(icode,source,klist,cc_4,n)
+      bio(:,:,:,n,2)=bio(:,:,:,n,2)+source(:,:,:)*biodt_sou
+      if (sediment) then
+         call NOR05_botsource(icode,source,biodt_sou,klist,cc_4,n)
+         do i=1-margin,ii+margin
+         do j=1-margin,jj+margin
+            kmax=klist(i,j)
+            bio(i,j,kmax,n,2)=bio(i,j,kmax,n,2)
+     &                       +source(i,j,kmax)*biodt_sou
+         enddo
+         enddo
+      endif
+!      !call nconservation('after icode=2',n)
+!      CALL BIOBOUND(ICODE,rt%ihh)
+!----------------------------------------
+! Silikate shells (SIS) and Detritus (DET)
+!----------------------------------------
+      icode = 7
+      call NOR05_source(icode,source,klist,cc_4,n)
+      bio(:,:,:,n,5)=bio(:,:,:,n,5)+source(:,:,:)*biodt_sou
+      if (sediment) then
+         call NOR05_botsource(icode,source,biodt_sou,klist,cc_4,n)
+         do i=1-margin,ii+margin
+         do j=1-margin,jj+margin
+            kmax=klist(i,j)
+            bio(i,j,kmax,n,5)=bio(i,j,kmax,n,5)
+     &                       +source(i,j,kmax)*biodt_sou
+         enddo
+         enddo
+      endif
+!
+! Sinking of SIS
+!
+      if(sinkfl==1) then      
+      do i=1-margin,ii+margin
+      do j=1-margin,jj+margin
+      w(:)=srsis/day 
+      if (depths(i,j).gt.1.0) then
+       call NOR05_phytosink(bio(i,j,1:klist(i,j),n,5),
+     &                       -w,-p(i,j,2:klist(i,j)+1)/onem,biodt_sou,  
+     &                       klist(i,j),sink(1:klist(i,j)))   
+      do k=1,klist(i,j)  
+!         call checknan(sink(k),'SIS sinking')
+         bio(i,j,k,n,5)=bio(i,j,k,n,5)+sink(k)
+      enddo
+      endif
+      enddo
+      enddo
+      endif
+      if(sediment)then
+!
+! Sedimentation of silicate shells
+!
+         tmp(:,:,:,:) = bio(:,:,:,:,5)
+         call NOR05_phyto_sed(icode,tmp,biodt_sou,klist,n)
+!
+!  Resuspension of silicate shells
+!
+        call NOR05_resusp(icode,tmp,biodt_sou,n,klist)
+      endif
+!      !call nconservation('after icode=7',n)
+!      CALL BIOBOUND(ICODE,rt%ihh)
+!
+      icode = 6
+      call NOR05_source(icode,source,klist,cc_4,n)
+      print*,'bio bef source',bio(110,75,18:22,n,4)
+      bio(:,:,:,n,4)=bio(:,:,:,n,4)+source(:,:,:)*biodt_sou
+      print*,'bio aft source',bio(110,75,18:22,n,4)
+      print*,'source:',source(110,75,18:kdm)*biodt_sou
+      if (sediment) then
+         call NOR05_botsource(icode,source,biodt_sou,klist,cc_4,n)
+         do i=1-margin,ii+margin
+         do j=1-margin,jj+margin
+            kmax=klist(i,j)
+            bio(i,j,kmax,n,4)=bio(i,j,kmax,n,4)
+     &                       +source(i,j,kmax)*biodt_sou
+            if(i==110.and.j==75) then
+               print*,'bot_source:',source(110,75,kmax)*biodt_sou
+               print*,'kmax is:',kmax
+            endif
+         enddo
+         enddo
+      endif
+      if(sinkfl==1)then   
+      do i=1-margin,ii+margin
+      do j=1-margin,jj+margin
+      w(:)=srdet/day 
+      if (depths(i,j).gt.1.0) then
+        call NOR05_phytosink(bio(i,j,1:klist(i,j),n,4),
+     &                       -w,-p(i,j,2:klist(i,j)+1)/onem,biodt_sou,  
+     &                       klist(i,j),sink(1:klist(i,j)))   
+      do k=1,klist(i,j)  
+         !call checknan(sink(k),'DET sinking')
+         bio(i,j,k,n,4)=bio(i,j,k,n,4)+sink(k)
+!         if(i==109 .and. j==74) then
+!            do kbio=1,nbio
+!               print*,'bio is:',bio(i,j,k,n,kbio),k,kbio
+!            enddo
+!         endif
+      enddo
+      endif
+      if(i==110 .and. j==75) then
+      do k=1,kdm
+         print*,'bio and sink:',bio(i,j,k,n,4),sink(k),dp(i,j,k,n)/onem
+      enddo
+      endif
+      enddo
+      enddo
+      endif
+      if(sediment)then
+         tmp(:,:,:,:) = bio(:,:,:,:,4) 
+         call NOR05_phyto_sed(icode,tmp,biodt_sou,klist,n)
+         call NOR05_resusp(icode,tmp,biodt_sou,n,klist)
+      endif
+!      !call nconservation('after icode=6',n)
+!      CALL BIOBOUND(ICODE,rt%ihh)
+!----------------------------------------
+! Diatomeer og flagellater and chatonella
+!----------------------------------------
+      !print*,'bio is, before phyto_sink',bio(89,45,1:3,n,6:7)
+      icode = 4
+      call NOR05_source(icode,source,klist,cc_4,n)
+      bio(:,:,:,n,7)=bio(:,:,:,n,7)+source(:,:,:)*biodt_sou
+      if (sediment) then
+         call NOR05_botsource(icode,source,biodt_sou,klist,cc_4,n)
+         do i=1-margin,ii+margin
+         do j=1-margin,jj+margin
+            kmax=klist(i,j)
+            bio(i,j,kmax,n,7)=bio(i,j,kmax,n,7)
+     &                       +source(i,j,kmax)*biodt_sou
+         enddo
+         enddo
+      endif
+      if(sinkfl==1)then
+      do i=1-margin,ii+margin
+      do j=1-margin,jj+margin
+      do k=1,kdm-2
+!      if(bio(i,j,k,n,3)/csil.lt.sib) then
+!         srdia=srdiamax 
+!      else
+         srdia=srdiamin
+!      endif
+      w(:)=srdia
+      w(:)=w(:)/day
+      enddo
+      if (depths(i,j) .gt. 1.0) then
+        call NOR05_phytosink(bio(i,j,1:klist(i,j),n,7),
+     &                       -w,-p(i,j,2:klist(i,j)+1)/onem,biodt_sou,  
+     &                       klist(i,j),sink(1:klist(i,j)))   
+      do k=1,klist(i,j)  
+         bio(i,j,k,n,7)=bio(i,j,k,n,7)+sink(k)
+      enddo
+      endif
+      enddo
+      enddo
+      endif
+      if(sediment)then
+         tmp(:,:,:,:) =bio(:,:,:,:,7) 
+         call NOR05_phyto_sed(icode,tmp,biodt_sou,klist,n)
+!        CALL NOR05_resusp(icode,tmp,biodt_sou,n,klist)
+      endif
+!      !call nconservation('after icode=4',n)
+!      CALL BIOBOUND(ICODE,rt%ihh)
+!-START FLAgellates----------------------------------------------------
+      icode = 5
+      call NOR05_source(icode,source,klist,cc_4,n)
+      bio(:,:,:,n,6)=bio(:,:,:,n,6)+source(:,:,:)*biodt_sou
+      if (sediment) then
+         call NOR05_botsource(icode,source,biodt_sou,klist,cc_4,n)
+         do i=1-margin,ii+margin
+         do j=1-margin,jj+margin
+            kmax=klist(i,j)
+            bio(i,j,kmax,n,6)=bio(i,j,kmax,n,6)
+     &                       +source(i,j,kmax)*biodt_sou
+         enddo
+         enddo
+      endif
+      if(sinkfl==1)then
+      do i=1-margin,ii+margin
+      do j=1-margin,jj+margin
+      w(:)=srfla/day 
+      if (depths(i,j) .gt. 1.0) then
+        call NOR05_phytosink(bio(i,j,1:klist(i,j),n,6),
+     &                       -w,-p(i,j,2:klist(i,j)+1)/onem,biodt_sou,  
+     &                       klist(i,j),sink(1:klist(i,j)))   
+      do k=1,klist(i,j)  
+         !call checknan(sink(k),'FLA sinking')
+         bio(i,j,k,n,6)=bio(i,j,k,n,6)+sink(k)
+      enddo
+      endif
+      enddo
+      enddo
+      endif
+      if(sediment)then
+         tmp(:,:,:,:) = bio(:,:,:,:,6) 
+         call NOR05_phyto_sed(icode,tmp,biodt_sou,klist,n)
+!        CALL NOR05_resusp(icode,tmp,biodt_sou,n,klist)
+      endif
+!      !call nconservation('after icode=5',n)
+!      CALL BIOBOUND(ICODE,rt%ihh)
+!
+!#ifdef CHATONELLA
+!!-START CHAtonella----------------------------------------------------
+!      ICODE = 11
+!      CALL NOR05_source(icode,source,klist,cc_4,n)
+!      IF (SEDIMENT) THEN
+!         CALL NOR05_botsource(icode,source,biodt_sou,klist,cc_4,n)
+!         bio(:,:,:,n,?)=bio(:,:,:,n,?)+source(:,:,:)*biodt_sou
+!      ENDIF
+!      tmp = CHA
+!      CALL NOR05_phytosink(icode,tmp,biodt_sou,n)
+!      IF(SEDIMENT)THEN
+!         tmp = CHA
+!         CALL NOR05_phyto_sed(icode,tmp,biodt_sou,klist,n)
+!!!!        CALL NOR05_resusp(icode,tmp,biodt_sou,n,klist)
+!      ENDIF
+!      CALL BIOBOUND(ICODE,rt%ihh)
+!#endif
+!----------------------------------------
+! Yellow substance (YEL) and mineral sediment (SED)
+!----------------------------------------
+      icode = 10
+      call NOR05_source(icode,source,klist,cc_4,n)
+      bio(:,:,:,n,10)=bio(:,:,:,n,10)+source(:,:,:)*biodt_sou
+      if (sediment) then
+         call NOR05_botsource(icode,source,biodt_sou,klist,cc_4,n)
+         do i=1-margin,ii+margin
+         do j=1-margin,jj+margin
+            kmax=klist(i,j)
+            bio(i,j,kmax,n,10)=bio(i,j,kmax,n,10)
+     &                        +source(i,j,kmax)*biodt_sou
+         enddo
+         enddo
+      endif
+!      print*,'bio is bef. sink:',bio(109,74,17,n,10),
+!     &  dp(109,74,17,n)/onem
+      if(sinkfl==1)then
+      do i=1-margin,ii+margin
+      do j=1-margin,jj+margin
+      w(:)=sryel/day 
+      if (depths(i,j) .gt. 1.0) then
+        call NOR05_phytosink(bio(i,j,1:klist(i,j),n,10),
+     &                       -w,-p(i,j,2:klist(i,j)+1)/onem,biodt_sou,  
+     &                       klist(i,j),sink(1:klist(i,j)))   
+      do k=1,klist(i,j)  
+!         call checknan(sink(k),'YEL sinking')
+!         bio(i,j,k,n,10)=bio(i,j,k,n,10)+sink(k)
+!         if (i==109 .and. j==74) then
+!            print*,'sink yel is:',sink(k)
+!            print*,'source yel is:',source(i,j,k)
+!         endif
+      enddo
+      endif
+      enddo
+      enddo
+      endif
+!      print*,'bio is aft. sink:',bio(109,74,17,n,10),
+!     &  dp(109,74,17,n)/onem
+      if(sediment)then
+         tmp = bio(:,:,:,:,10) 
+         call NOR05_phyto_sed(icode,tmp,biodt_sou,klist,n)
+         call NOR05_resusp(icode,tmp,biodt_sou,n,klist)
+      endif
+!     ! call nconservation('after icode=10',n)
+!      CALL BIOBOUND(ICODE,rt%ihh)
+!
+      icode = 9
+      call NOR05_source(icode,source,klist,cc_4,n)
+      bio(:,:,:,n,9)=bio(:,:,:,n,9)+source(:,:,:)*biodt_sou
+      if (sediment) then
+         call NOR05_botsource(icode,source,biodt_sou,klist,cc_4,n)
+         do i=1-margin,ii+margin
+         do j=1-margin,jj+margin
+            kmax=klist(i,j)
+            bio(i,j,kmax,n,9)=bio(i,j,kmax,n,9)
+     &                       +source(i,j,kmax)*biodt_sou
+         enddo
+         enddo
+      endif
+      if(sinkfl==1)then
+      do i=1-margin,ii+margin
+      do j=1-margin,jj+margin
+      w(:)=srsed/day 
+      if (depths(i,j) .gt. 1.0) then
+        call NOR05_phytosink(bio(i,j,1:klist(i,j),n,9),
+     &                       -w,-p(i,j,2:klist(i,j)+1)/onem,biodt_sou,  
+     &                       klist(i,j),sink(1:klist(i,j)))   
+      do k=1,klist(i,j)  
+!         call checknan(sink(k),'SED sinking')
+!         bio(i,j,k,n,9)=bio(i,j,k,n,9)+sink(k)
+      enddo
+      endif
+      enddo
+      enddo
+      endif
+      if(sediment)then
+         tmp(:,:,:,:) = bio(:,:,:,:,9) 
+         call NOR05_phyto_sed(icode,tmp,biodt_sou,klist,n)
+         call NOR05_resusp(icode,tmp,biodt_sou,n,klist)
+      endif
+!      !call nconservation('after icode=9',n)
+!      CALL BIOBOUND(ICODE,rt%ihh)
+!
+!***END Adveksjon/diffusjon/synking av plankton og naering
+!
+!*** DIA and FLA becomes DET and SIS as they hit the bottom.
+!
+      
+      max_nit=-1000.
+      max_pho=-1000.
+      max_sil=-1000.
+      max_det=-1000.
+      max_sis=-1000.
+      max_fla=-1000.
+      max_dia=-1000.
+      max_oxy=-1000.
+      max_sed=-1000.
+      max_yel=-1000.
+      min_nit=10000.
+      min_pho=10000.
+      min_sil=10000.
+      min_det=10000.
+      min_sis=10000.
+      min_fla=10000.
+      min_dia=10000.
+      min_oxy=10000.
+      min_sed=10000.
+      min_yel=10000.
+      do j=1-margin,jj+margin
+      do i=1-margin,ii+margin
+      do k=1,klist(i,j)
+      if(depths(i,j)>1.0) then
+         max_nit=max(max_nit,bio(i,j,k,n,1))
+         min_nit=min(min_nit,bio(i,j,k,n,1))
+         max_pho=max(max_pho,bio(i,j,k,n,2))
+         min_pho=min(min_pho,bio(i,j,k,n,2))
+         max_sil=max(max_sil,bio(i,j,k,n,3))
+         min_sil=min(min_sil,bio(i,j,k,n,3))
+         max_det=max(max_det,bio(i,j,k,n,4))
+        min_det=min(min_det,bio(i,j,k,n,4))
+         max_sis=max(max_sis,bio(i,j,k,n,5))
+         min_sis=min(min_sis,bio(i,j,k,n,5))
+         max_fla=max(max_fla,bio(i,j,k,n,6))
+         min_fla=min(min_fla,bio(i,j,k,n,6))
+         max_dia=max(max_dia,bio(i,j,k,n,7))
+         min_dia=min(min_dia,bio(i,j,k,n,7))
+         max_oxy=max(max_oxy,bio(i,j,k,n,8))
+         min_oxy=min(min_oxy,bio(i,j,k,n,8))
+         max_sed=max(max_sed,bio(i,j,k,n,9))
+         min_sed=min(min_sed,bio(i,j,k,n,9))
+         max_yel=max(max_yel,bio(i,j,k,n,10))
+         min_yel=min(min_yel,bio(i,j,k,n,10))
+      endif
+      enddo
+      enddo
+      enddo
+      print*,'Max nit,pho,sil,det',max_nit,max_pho,max_sil,max_det
+      print*,'Max sis,fla,dia,oxy',max_sis,max_fla,max_dia,max_oxy
+      print*,'Max sed,yel',max_sed,max_yel
+      print*,'Min nit,pho,sil,det',min_nit,min_pho,min_sil,min_det
+      print*,'Min sis,fla,dia,oxy',min_sis,min_fla,min_dia,min_oxy
+      print*,'Min sed,yel',min_sed,min_yel
+!---CH:calling deadbot if the lowest layer is thinner than 3 m      
+      !   call NOR05_deadbot(n,klist)
+!
+!      !call nconservation('last line',n)
+      do i=1-margin,ii+margin
+      do j=1-margin,jj+margin
+      do k=1,kdm
+!      if(bio(i,j,k,n,5).gt.1800.) then
+!         bio(i,j,k,n,5)=1800.
+!      endif
+!      if(bio(i,j,k,n,4).gt.280.)then
+!         bio(i,j,k,n,4)=280.
+!      endif
+!      if(bio(i,j,k,n,6).gt.300)then
+!         bio(i,j,k,n,6)=300.
+!      endif
+!      if(bio(i,j,k,n,7).gt.300)then
+!         bio(i,j,k,n,7)=300.
+!      endif
+      do kbio=1,nbio
+      if(k.gt.klist(i,j)) then
+         bio(i,j,k,n,kbio)=bio(i,j,klist(i,j),n,kbio)
+      endif
+         call checkneg_pos(bio(i,j,k,n,kbio),i,j,k,kbio,klist(i,j)
+     &    ,'after biochm')
+      enddo
+      enddo
+      enddo
+      enddo
+!
+
+      return
+      end subroutine NOR05_biochm
+      end module m_NOR05_biochm  

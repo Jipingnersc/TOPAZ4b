@@ -1,0 +1,350 @@
+C***BEGIN DESCRIPTION GLOBALS
+C
+C   This file is a description og the global variables
+C   used in connection with the Princeton Ocean Model (POM).
+C
+C   The variables are grouped according to their type and dimension.
+C
+C***DATE WRITTEN   910626 (YYMMDD)
+C***REVISION DATE  911122 (YYMMDD)
+C***AUTHOR
+C            Jarle Berntsen, Institute of Marine Research,
+C            Postboks 1870,
+C            N-5024 Bergen-Nordnes, Norway
+C            Email..  jarleb@imr.no
+C
+C***INTEGERS
+C
+C   Integers defining the grid size.
+C
+C   IM     Number of cells in X-direction.
+C   JM     Number of cells in Y-direction.
+C   KB     Number of sigma layers + 1.
+C   LIJ    IM*JM.
+C
+C   Integers defining the model time or time periods.
+C
+C   NUMSTP Internal mode time index.
+C   IPRTD1 Long interval in hours between printouts. 
+C   IPRTDT Short interval in hours between printouts.
+C   IPRINT Long interval in NUMSTP between printouts.
+C   IPRTOT Short interval in NUMSTP between printouts.
+C   IDAYS  The number of days the model is run.
+C   ISPLIT The number of external mode steps for each internal mode
+C          step.
+C   ISPADV The number of external mode steps between each time some
+C          vertical integrals are updated.
+C   NDIVIS The number of internal steps per hour.
+C   IEND   The number of internal step in IDAYS days.
+C   NATMO  Maximum allowed number of hours between new atmospheric data.
+C   IDIFH  Time difference in hours between atmospheric data.
+C   INTMET When INTMET = NUMSTP, we read new atmospheric forcing.
+C
+C   Integers defining the size of the FRS-zones.
+C
+C   LB     The number of cells in the FRS-zone.
+C   MC     LB+1.
+C   MM10   IM-LB+1.
+C   NM10   JM-LB+1.
+C
+C   Integers connected to data files.
+C
+C   NNIN   File unit number of the bottom topography data file.
+C   NYIN   File unit number of the atmospheric data file.
+C   NDSI   File unit number of the output file.
+C   NUNNIN Record number of the first record to be read when we read
+C          from NNIN with the routine RFLT.
+C   NUNYIN Record number of the first record to be read when we read 
+C          from NYIN with the routine RFLT.
+C   NUNDSI Record number of the previous record when writing
+C          to NNDSI with the routine PUTFLT.
+C   LENREC Record length of direct access input and output files.
+C   MAXDIM Dimension of the array BBGRD used as a working array when
+C          reading atmospheric data.
+C   LINN   The number of z-levels of input data to the model.
+C          The z-level data is interpolated to sigma layers by
+C          the routine Z2SIGMA.
+C
+C   Administration integers.
+C
+C   MODE   If MODE = 2, the model is run in barotropic 2-D mode.
+C          If MODE = 3, the model is run prognostic 3-D. That is:
+C                       salinity and temperature are advected.
+C          If MODE = 4, the model is run diagnostic 3-D. That is:
+C                       without advecting salinity and temperature.
+C   MEDO   Is used when calling PTXY and NEWPTXY.
+C          MEDO = 0 on the first call.
+C          MEDO = 2 on later calls.
+C
+C   1-D INTEGER arrays.
+C
+C   NDATE  Integer array of dimension 5.
+C          NDATE(1) defines the year.
+C          NDATE(2) defines the month.
+C          NDATE(3) defines the day.
+C          NDATE(4) defines the hour.
+C          NDATE(5) is the number of hours since the start of the 
+C          computation.
+C   IDENTI Integer array of dimension 20.
+C          This is the DNMI filed head identifying 2-D gridded arrays
+C          of model results.
+C          IDENTI(1) identifies the producer.
+C          IDENTI(2) grid area.
+C          IDENTI(3) data type.
+C          IDENTI(4) time parameter.
+C          IDENTI(5) vertical coordinate.
+C                    IDENTI(5) = 1 for z-level data.
+C                    IDENTI(5) = 2 for sigma-level data.
+C          IDENTI(6) identifies the parameter.
+C                    IDENTI(6) = 301 for water elevation.
+C                    IDENTI(6) = 302 for U-comp. of velocity.
+C                    IDENTI(6) = 303 for V-comp. of velocity.
+C                    IDENTI(6) = 307 for salinity.
+C                    IDENTI(6) = 308 for temperature.
+C                    IDENTI(6) = 351 for bottom topography.
+C          IDENTI(7) level 1?
+C          IDENTI(8) level 2?
+C          IDENTI(9) classifies the grid.
+C                    IDENTI(9) = 1 for rectangular grids.
+C          IDENTI(10) = IM.
+C          IDENTI(11) = JM.
+C          IDENTI(12) = year.
+C          IDENTI(13) = month*100 + day.
+C          IDENTI(14) = hour*100 + minute.
+C          IDENTI(15) = XP*100.
+C          IDENTI(16) = YP*100. 
+C                   XP and YP are the x-coordinate and the y-coordinate
+C                   respectively of the North Pole in the given grid.
+C          IDENTI(17) = (grid spacing in KM) * 10.
+C          IDENTI(18) = Angle of the Y-axis if the grid.
+C          IDENTI(19) is avaliable for different purposes.
+C                     IDENTI(19) = sigma*10000 when
+C                     IDENTI(5) = 2 (sigma coordinate data).
+C          IDENTI(20) defines the scaling of the parameters.
+C                     real value = stored value * 10**(IDENTI(20)).
+C
+C   IOUTGRID Integer array of dimension 4.
+C            Is defined in DYPGRIN. (trenger vi denne?)
+C            IOUTGRID(I) = IDENTI(14+I),I=1,2,3 and 4.
+C   ISTART Integer array of dimension 4.
+C          Defines the start time of the computation.
+C          ISTART(1) = year.
+C          ISTART(2) = month.
+C          ISTART(3) = day.
+C          ISTART(4) = hour.
+C   IDATEMET Integer array of dimension 4.
+C          Defines the time for reading atmospheric forcing.
+C          trenger vi denne?
+C
+C***REALS
+C
+C   DTI    The internal time step. (s)
+C   DTE    The external time step. (s)
+C   DTI2   2*DTI. (s)
+C   DTE2   2*DTE. (s)
+C   UMOL   The minimum allowed value of the vertical diffusion
+C          coefficient. (m**2/s)
+C   GRAV   Gravity. (m/s**2)
+C   RHO0   Reference density of sea water. (kg/m**3)
+C   ROAIR  Reference density of air. (kg/m**3)
+C   DX     Grid spacing in x-direction. (m)
+C   DY     Grid spacing in y-direction. (m)
+C   DEPMAX Maximum depth. (m)
+C   HORCON Horisontal diffusion constant used in connection
+C          with Smagorinsky's technique. (dimensionless)
+C   SMOTH  Smoothing parameter used to remove computational
+C          modes from the leapfrog approximations. (dimensionless)
+C   SMALL  A small parameter used to avoid division by zero
+C          when computing the vertical turbulence.
+C   PMEAN  Average atmospheric pressure. (Pa = N/m**2 = kg/(m*s**2) )
+C   DIVROG = 1/(RHO0*GRAV). 
+C   CFLCRI The Courant-Friedrichs-Lewy criterion for stability. (s)
+C
+C***1-D REAL ARRAYS
+C
+C   Arrays of dimension KB.
+C
+C   Z      Sigma coordinate interfaces between layers,
+C          Z(1) = 0. and Z(KB) = -1. 
+C   DZ     Thickness of the sigma-layers.(DZ(K)=Z(K)-Z(K+1))
+C   ZZ     The sigma coordinate depths of the (S,T) points.
+C          (ZZ(K) = (Z(K)+Z(K+1))/2).
+C   DZZ    Vertical sigma-coordinate distance between (S,T) points.
+C          (DZZ(K) = ZZ(K) - ZZ(K+1)).
+C   DZR    Inverse of the sigma coordinate thickness of the layers.
+C          (DZR(K) = 1/DZ(K)).
+C   
+C          Z,DZ,ZZ,DZZ and DZR are dimensionless.
+C
+C   BBGRD  Array of dimension MAXDIM.
+C          BBGRD is used as a working array when reading
+C          atmospheric data.
+C   GRIDAA Array of dimension 4. GRIDAA contains neccesary
+C          grid information to be used when transforming 
+C          the atmospheric forcing on to our grid.
+C
+C***2-D REAL ARRAYS
+C
+C   Arrays of dimension (IM,JM)
+C
+C   H      The depths. (m)
+C   EL     The surface elevation as used in the external mode. (m)
+C   ELF    The external mode surface elevation at time +DTE. (m)
+C   ELB    The external mode surface elevation at time -DTE. (m)
+C   ET     The surface elevation as used in the internal mode. (m)
+C   ETF    The internal mode surface elevation at time +DTI. (m)
+C   ETB    The internal mode surface elevation at time -DTI. (m)
+C   EGF    The average of the external mode surface elevations 
+C          over the time (time,time+DTI). (m)
+C   EGB    The average of the external mode surface elevations 
+C          over the time (time-DTI,time). (m)
+C   D      Dynamic depth, H + EL. (m)
+C   DT     Dynamic depth, H + ET. (m) (Uheldig valg av navn?)
+C   FSM    Mask for scalar variables. FSM = 0 over land cells,
+C          and FSM = 1 over sea cells.
+C   DUM    Mask for the U-component of the velocity.
+C          DUM = 0 over land and 1 over sea.
+C   DVM    Mask for the V-component of the velocity.
+C          DVM = 0 over land and 1 over sea.
+C   UA     Depth integrated value of U. (m/s)
+C   UAF    Depth integrated value of U at time +DTE. (m/s)
+C   UAB    Depth integrated value of U at time -DTE. (m/s)
+C   UTF    The average of UA over the time (time,time+DTI). (m/s)
+C   UTB    The average of UA over the time (time-DTI,time). (m/s)
+C   VA     Depth integrated value of V. (m/s) 
+C   VAF    Depth integrated value of V at time +DTE. (m/s) 
+C   VAB    Depth integrated value of V at time -DTE. (m/s)
+C   VTF    The average of VA over the time (time,time+DTI). (m/s)
+C   VTB    The average of VA over the time (time-DTI,time). (m/s)
+C   CBC    Bottom friction coefficient. (dimensionless)
+C   COR4   Coriolis parameter/4. (1/s)
+C   WUSURF Momentum flux in X-direction at the surface. (m**2/s**2)
+C   WVSURF Momentum flux in Y-direction at the surface. (m**2/s**2)
+C   DUSURF Difference in WUSURF from one atmospheric forcing
+C          to the next. (m**2/s**2)
+C   DVSURF Difference in WVSURF from one atmospheric forcing
+C          to the next. (m**2/s**2)
+C   WTSURF Surface boundary condition for temperature. (Celcius)
+C   WSSURF Surface boundary condition for salinity. (Practical Salinity)
+C   WUBOT  Momentum flux in X-direction at the bottom. (m**2/s**2)
+C   WVBOT  Momentum flux in Y-direction at the bottom. (m**2/s**2)
+C   AAM2D  Horizontal depth integrated diffusivity. (m**2/s)
+C   PATM   Atmospheric pressure. (Pa = N/m**2 = kg/(m*s**2) )
+C   DATM   Difference in atmospheric pressure. (Pa)
+C   ADVUA  Sum of the advection and diffusion terms of the
+C          vertical integrated moment equation in U times the
+C          area of the cell. (m**4/s**2).
+C   ADVVA  Same as ADVUA, but for the moment equation in V.
+C   ADVUU  Sum of advection and diffusion terms of the
+C          vertical integrated moment equation in U times the
+C          area of the cell. (m**4/s**2).
+C   ADVVV  Same as ADVUU, but for the moment equation in V.
+C          ADVUU and ADVVV are modified for each internal step.
+C          ADVUA and ADVVA are modified each ISPADV'th external step.
+C   TRNU   Depth integrated values of two vertical integrals in the
+C          moment equation in U times the are of the cell. (m**4/s**2)
+C   TRNV   Same as TRNU, but for the moment equation in V.
+C
+C   FLUXUA Working array.
+C   FLUXVA Working array.
+C   TPS    Working array.
+C   C11    Working array.
+C   C12    Working array.
+C   C21    Working array.
+C   C22    Working array.
+C   DENOM  Working array.
+C   VELOUT Working array.
+C   FW     Working array.
+C
+C   The following variables:
+C          H,EL,ELF,ELB,ET,ETF,ETB,EGF,EGB,D,DT,FSM,CBC,COR4,
+C          WUSURF,WVSURF,DUSURF,DVSURF,WTSURF,WSSURF,AAM2D,PATM,
+C   are defined in the (S,T)-points of the 2-D Arakawa C-grid.
+C
+C   The following variables:
+C          DUM,UA,UAF,UAB,WUBOT,ADVUA, ADVUU,TRNU,
+C   are defined in the U-points of the 2-D Arakawa C-grid.
+C
+C   The following variables: 
+C          DVM,VA,VAF,VAB,WVBOT,ADVVA,ADVVV,TRNV,
+C   are defined in the V-points of the 2-D Arakawa C-grid.
+C
+C***3-D REAL ARRAYS
+C
+C   Arrays of dimension (IM,JM,KB).
+C
+C   U      Horisontal velocity in X-direction
+C          at timestep n. (m/s)
+C   UF     Horisontal velocity in X-direction
+C          at timestep n + DTI. (m/s)
+C   UB     Horisontal velocity in X-direction
+C          at timestep n - DTI. (m/s)
+C   V      Horisontal velocity in Y-direction
+C          at timestep n. (m/s)
+C   VF     Horisontal velocity in Y-direction
+C          at timestep n + DTI. (m/s) 
+C   VB     Horisontal velocity in Y-direction 
+C          at timestep n - DTI. (m/s)
+C   W      Sigma coordinate vertical velocity. (m/s)
+C   WR     Physical coordinate vertical velocity. (m/s)
+C
+C   T      Temperature at timestep n. (Celcius)
+C   TB     Temperature at timestep n - DTI. (Celcius)
+C   TMEAN  Mean temperature. (Celcius)
+C   S      Salinity at timestep n. (Practical Salinity)
+C   SB     Salinity at timestep n - DTI. (Practical Salinity)
+C   SMEAN  Mean salinity. (Practical Salinity)
+C   RHO    Density. (kg/m**3)
+C   RMEAN  Mean density. (kg/m**3)
+C
+C   Q2     Turbulence kinetic energy times two
+C          at timestep n. (m**2/s**2)
+C   Q2B    Turbulence kinetic energy times two
+C          at timestep n - DTI. (m**2/s**2)
+C   Q2L    Q2 * Turbulence length scale at timestep n. (m**3/s**2)
+C   Q2LB   Q2 * Turbulence length scale at timestep n - DTI.
+C   KM     Vertical eddy viscosity. (m**2/s)
+C   KH     Vertical diffusion. (m**2/s)
+C   KQ     Vertical viscosity used in the turbulence closure
+C          scheme. (m**2/s)
+C   L      Turbulence length scale. (m)
+C
+C   AAM    Horisontal diffusivities. (m**2/s)
+C
+C   DRHOX  X-Component of the internal baroclinic pressure
+C          gradient. (m**4/s**2)
+C   DRHOY  Y-Component of the internal baroclinic pressure
+C          gradient. (m**4/s**2)
+C
+C   A      Working array.
+C   C      Working array.
+C   VH     Working array.
+C   VHP    Working array.
+C   PROD   Working array.
+C   DTEF   Working array.
+C   TCLIM1 Working array.
+C          Climatological temperature at the 15th of month 1.
+C   TCLIM2 Working array.
+C          Climatological temperature at the 15th of month 2.
+C   SCLIM1 Working array.
+C          Climatological salinity at the 15th of month 1.
+C   SCLIM2 Working array.
+C          Climatological salinity at the 15th of month 2.
+C
+C   The following variables:
+C       WR,T,TB,TMEAN,S,SB,SMEAN,RHO,RMEAN,AAM,
+C   are defined in the (S,T)-points of the 3-D Arakawa C-grid.
+C
+C   The following variables:
+C       U,UF,UB,DRHOX,
+C   are defined in the U-points of the 3-D Arakawa C-grid.
+C
+C   The following variables: 
+C       V,VF,VB,DRHOY,
+C   are defined in the V-points of the 3-D Arakawa C-grid.
+C
+C   The following variables:
+C       W,Q2,Q2B,Q2L,Q2LB,KM,KH,KQ,L,
+C   are defined in the W-points of the 3-D Arakawa C-grid.
+C
+C***END DESCRIPTION

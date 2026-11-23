@@ -1,0 +1,206 @@
+!-----------------------------------------------------------------------------
+      real, dimension (1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy,kdm,2) :: &
+       u,v,         &  ! velocity components
+       dp,dpu,dpv,  &  ! layer thickness
+       temp,        &  ! temperature
+       saln,        &  ! salinity
+       th3d,        &  ! potential density
+       thstar,      &  ! virtual potential density
+       montg          ! montgomery potential
+
+      real, dimension (1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy,kdm,2,mxtrcr) :: &
+       tracer         ! inert tracers
+
+      real, dimension (1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy,kdm+1) :: &
+       p,pu,pv        ! interface pressure
+
+      real, dimension (1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy,kdm) :: &
+       dpold,       &  ! layer thickness                        
+       dpoldm,      &  ! layer thickness
+       theta,       &  ! isopycnal layer target densties - thbase
+       diaflx          ! time integral of diapyc.flux
+
+      real, dimension (1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy) :: &
+       corio,       &  ! coriolis parameter
+       potvor,      &  ! potential vorticity
+       srfhgt,      &  ! sea surface height, g*ssh(m)
+       steric,      &  ! steric sea surface height, g*sssh(m)
+       sshgmn,      &  !   mean sea surface height, g*mssh(m)
+       thmean,      &  !   mean depth averaged density
+       montg1,      &  ! layer 1 montgomery potential
+       skap           ! thermobaric scale factor between reference states
+
+      real, dimension (1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy,2) :: &
+       psikk,      &   ! montg.pot. in bottom layer           
+       thkk           ! virtual potential density in bottom layer
+
+
+      common/hycom1r/ u,v,dp,dpold,dpoldm,dpu,dpv,p,pu,pv, &
+                     corio,psikk,thkk,potvor,              &
+                     srfhgt,steric,sshgmn,thmean,montg1,   &
+                     temp,saln,th3d,thstar,skap,theta,diaflx,tracer
+      save  /hycom1r/
+!
+      real, dimension (1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy,kdm) :: &
+       uflx,vflx,    & ! mass fluxes
+       uflxav,vflxav,& ! average fluxes
+       dpav           ! average fluxes
+
+      real, dimension (1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy,3) :: &
+       ubavg,vbavg,  & ! barotropic velocity
+       pbavg          ! barotropic pressure
+
+      real, dimension (1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy) :: &
+       defor1,defor2, & ! deformation components
+       ubrhs, vbrhs,  & ! rhs of barotropic u,v eqns.
+       utotm, vtotm,  & ! total (barotrop.+baroclin.)..
+       utotn, vtotn,  & ! ..velocities at 2 time levels
+       uflux, vflux,  & ! horizontal mass fluxes
+       uflux1,vflux1, & ! more mass fluxes
+       uflux2,vflux2, & ! more mass fluxes
+       uflux3,vflux3    ! more mass fluxes
+
+      common/hycom2r/ montg,defor1,defor2,ubavg,vbavg,pbavg, &
+                      ubrhs,vbrhs,utotm,vtotm,utotn,vtotn, &
+                      uflux, vflux, uflux1,vflux1, &
+                      uflux2,vflux2,uflux3,vflux3, &
+                      uflx,vflx,uflxav,vflxav,dpav
+      save  /hycom2r/
+!
+! --- 'sigma ' = isopyncnal layer target densities (sigma units)
+! --- 'thbase' = reference density (sigma units)
+! --- 'saln0'  = initial salinity value
+! --- 'baclin' = baroclinic time step
+! --- 'batrop' = barotropic time step
+! ---'qhybrlx' = HYBGEN: relaxation coefficient (inverse baroclinic time steps)
+! --- 'hybiso' = HYBGEN: Use PCM if layer is within hybiso of target density
+! --- 'visco2' = deformation-dependent Laplacian  viscosity factor
+! --- 'visco4' = deformation-dependent biharmonic viscosity factor
+! --- 'facdf4' =       speed-dependent biharmonic viscosity factor
+! --- 'veldf2' = diffusion velocity (m/s) for Laplacian  momentum dissipation
+! --- 'veldf4' = diffusion velocity (m/s) for biharmonic momentum dissipation
+! --- 'temdf2' = diffusion velocity (m/s) for Laplacian  temp/saln diffusion
+! --- 'temdfc' = temp diffusion conservation (0.0 all density, 1.0 all temp)
+! --- 'thkdf2' = diffusion velocity (m/s) for Laplacian  thickness diffusion
+! --- 'thkdf4' = diffusion velocity (m/s) for biharmonic thickness diffusion
+! --- 'vertmx' = diffusion velocity (m/s) for mom.mixing across mix.layr.base
+! --- 'tofset' = temperature anti-drift offset (degC/century)
+! --- 'sofset' = salnity     anti-drift offset  (psu/century)
+! --- 'diapyc' = KT: diapycnal diffusivity x buoyancy freq. (m**2/s**2)
+! --- 'dtrate' = KT: maximum permitted m.l. detrainment rate (m/day)
+! --- 'slip'   = +1 for free-slip, -1  for non-slip boundary conditions
+! --- 'cb'     = coefficient of quadratic bottom friction
+! --- 'cbar'   = rms flow speed (m/s) for linear bottom friction law
+! --- 'drglim' = limiter for explicit friction (1.0 no limiter, 0.0 implicit)
+! --- 'drgscl' = scale factor for tidal drag   (0.0 for no tidal drag)
+! --- 'thkdrg' = thickness of bottom boundary layer for tidal drag (m)
+! --- 'dsurfq' = number of days between model diagnostics at the surface
+! --- 'diagfq' = number of days between model diagnostics
+! --- 'tilefq' = number of days between model diagnostics on some tiles
+! --- 'meanfq' = number of days between model diagnostics (time averaged)
+! --- 'rstrfq' = number of days between model restart output
+! --- 'bnstfq' = number of days between baro. nesting archive input
+! --- 'nestfq' = number of days between 3-d   nesting archive input
+! --- 'wuv1/2' = weights for time smoothing of u,v field
+! --- 'wts1/2' = weights for time smoothing of t,s field
+! --- 'wbaro'  = weight for time smoothing of barotropic u,v,p field
+! --- 'thkmls' = reference mixed-layer thickness for SSS relaxation (m)
+! --- 'thkmlt' = reference mixed-layer thickness for SST relaxation (m)
+! --- 'thkriv' = nominal thickness of river inflow (m)
+! --- 'thkfrz' = maximum thickness of near surface freezing zone (m)
+! --- 'tfrz_0' = ENLN: ice melting point (degC) at S=0psu
+! --- 'tfrz_s' = ENLN: gradient of ice melting point (degC/psu)
+! --- 'ticegr' = ENLN: vertical temperature gradient inside ice (deg/m)
+! ---                   (0.0 to get ice surface temp. from atmos. surtmp)
+! --- 'hicemn' = ENLN: minimum ice thickness (m)
+! --- 'hicemx' = ENLN: maximum ice thickness (m)
+! --- 'thkmin' = KT/PWP: minimum mixed-layer thickness (m)
+! --- 'bldmin' = KPP:    minimum surface boundary layer thickness (m)
+! --- 'bldmax' = KPP:    maximum surface boundary layer thickness (m)
+! --- 'thkbot' = thickness of bottom boundary layer (m)
+! --- 'sigjmp' = minimum density jump across interfaces   (theta units)
+! --- 'tmljmp' = equivalent temperature jump across the mixed layer (degC)
+! --- 'salmin' = minimum salinity allowed in an isopycnic layer
+! --- 'dp00'   = deep    z-level spacing minimum thickness (m)
+! --- 'dp00x'  = deep    z-level spacing maximum thickness (m)
+! --- 'dp00f'  = deep    z-level spacing stretching factor (1.0=const.z)
+! --- 'ds00'   = shallow z-level spacing minimum thickness (m)
+! --- 'ds00x'  = shallow z-level spacing maximum thickness (m)
+! --- 'ds00f'  = shallow z-level spacing stretching factor (1.0=const.z)
+! --- 'dp00i'  = deep iso-pycnal spacing minimum thickness (m)
+! --- 'isotop' = shallowest depth for isopycnal layers     (m), <0 from file
+! --- 'nhybrd' = number of hybrid levels (0=all isopycnal)
+! --- 'nsigma' = number of sigma  levels (nhybrd-nsigma z-levels)
+! --- 'hybmap' = HYBGEN:  remapper  flag (0=PCM,1=PLM,2=PPM,-ve:isoPCM)
+! --- 'hybflg' = HYBGEN:  generator flag (0=T&S,1=th&S,2=th&T)
+! --- 'advflg' = thermal  advection flag (0=T&S,1=th&S,2=th&T)
+! --- 'advtyp' = scalar   advection type (0=PCM,1=MPDATA,2=FCT2,4=FCT4)
+! --- 'momtyp' = momentum advection type (2=2nd order, 4=4th order)
+! --- 'kapref' = thermobaric reference state (-1=input,0=none,1,2,3=constant)
+! --- 'kapnum' = number of thermobaric reference states (1 or 2)
+! --- 'tsofrq' = number of time steps between anti-drift offset calcs
+! --- 'mixfrq' = KT: number of time steps between diapycnal mixing calcs
+! --- 'icefrq' = number of time steps between sea-ice updates
+! --- 'ntracr' = number of tracers (<=mxtrcr)
+! --- 'trcflg' = tracer type flag (one per tracer)
+! --- 'clmflg' = climatology frequency flag (6=bimonthly,12=monthly)
+! --- 'dypflg' = KT: diapycnal mixing flag (0=none,1=KPP,2=explicit)
+! --- 'iniflg' = initial state flag (0=level,1=zonal,2=climatology)
+! --- 'lbflag' = lateral barotropic bndy flag (0=none,1=port,2=nest,3=flather)
+! --- 'mapflg' = map flag (0=mercator,2=uniform,3=beta-plane,4=input)
+! --- 'yrflag' = days in year flag   (0=360,1=366,2=366Jan1,3=actual)
+! --- 'sshflg' = diagnostic SSH flag (0=SSH,1=SSH&stericSSH)
+! --- 'iversn' = hycom version number x10
+! --- 'iexpt'  = experiment number x10
+! --- 'jerlv0' = initial jerlov water type (1 to 5; 0 to use kpar)
+! --- 'iceflg' = sea ice model flag   (0=none,1=energy loan,2=coupled/esmf)
+! --- 'wndflg' = wind str. input flag (0=none,1=on u/v grid,2,3=on p grid)
+! --- 'ustflg' = ustar forcing flag          (3=input,1=wndspd,2=stress)
+! --- 'flxflg' = thermal forcing flag (0=none,3=net-flux,1,2,4=sst-based)
+! --- 'empflg' = E-P     forcing flag (0=none,3=net_E-P, 1,2,4=sst-based_E)
+! --- 'sssflg' = SSS relaxation  flag (0=none,1=clim)
+! --- 'lwflag' = longwave corr.  flag (0=none,1=clim,2=atmos), sst-based
+! --- 'sstflg' = SST relaxation  flag (0=none,1=clim,2=atmos,3=obs)
+! --- 'icmflg' = ice mask        flag (0=none,1=clim,2=atmos,3=obs)
+!
+      real           sigma,thbase,saln0,baclin,batrop,      &
+                     qhybrlx,hybiso,                        &
+                     visco2,visco4,veldf2,veldf4,facdf4,    &
+                     temdf2,temdfc,thkdf2,thkdf4,vertmx,diapyc, &
+                     tofset,sofset,dtrate,slip,cb,cbar,     & 
+                     drglim,drgscl,thkdrg,                  &
+                     dsurfq,diagfq,tilefq,meanfq,rstrfq,bnstfq,nestfq, &
+                     wuv1,wuv2,wts1,wts2,wbaro,             &
+                     thkmls,thkmlt,thkriv,thkmin,bldmin,bldmax,thkbot, &
+                     thkfrz,tfrz_0,tfrz_s,ticegr,hicemn,hicemx, &
+                     dp00,dp00f,dp00x,ds00,ds00f,ds00x,dp00i,isotop, &
+                     sigjmp,tmljmp,salmin
+      common/parms1r/sigma(kdm),thbase,saln0,baclin,batrop, &
+                     qhybrlx,hybiso,                        &
+                     visco2,visco4,veldf2,veldf4,facdf4,    &
+                     temdf2,temdfc,thkdf2,thkdf4,vertmx,diapyc, &
+                     tofset,sofset,dtrate,slip,cb,cbar,     &    
+                     drglim,drgscl,thkdrg,                  &
+                     dsurfq,diagfq,tilefq,meanfq,rstrfq,bnstfq,nestfq, &
+                     wuv1,wuv2,wts1,wts2,wbaro,             &
+                     thkmls,thkmlt,thkriv,thkmin,bldmin,bldmax,thkbot, &
+                     thkfrz,tfrz_0,tfrz_s,ticegr,hicemn,hicemx, &
+                     dp00,dp00f,dp00x,ds00,ds00f,ds00x,dp00i,isotop, &
+                     sigjmp,tmljmp,salmin(kdm)
+      save  /parms1r/
+!                          
+! --- 'tenm,onem,...' = pressure thickness values corresponding to 10m,1m,...
+! --- 'qonem'  = 1/onem
+! --- 'g'      = gravity acceleration
+! --- 'thref'  = reference value of specific volume (m**3/kg)
+! --- 'qthref' = 1/thref
+! --- 'spcifh' = specific heat of sea water (j/kg/deg)
+! --- 'epsil'  = small nonzero number used to prevent division by zero
+! --- 'huge'   = large number used to indicate land points
+!
+      real          tenm,onem,tencm,onecm,onemm,qonem, &
+                    g,thref,qthref,spcifh,epsil,huge,radian,pi
+      common/consts/tenm,onem,tencm,onecm,onemm,qonem, &
+                    g,thref,qthref,spcifh,epsil,huge,radian,pi
+      save  /consts/
+!

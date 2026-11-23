@@ -1,0 +1,41 @@
+bin directory has various scripts to generate climatologies for hycom - used for
+sidewall nudging, surface nudging and initialization.
+
+Procedure for generating relaxation assuming experiment number, 
+blkdat.input and topography is already set.
+
+1) Create horizontally interpolated fields (z_*.sh routines). Output is placed
+   in phc or levitus directories ++
+2) Create final climatology with relax.sh -  input is experiment (01.0) and 
+   climatology to use (phc or levitus). Output is placed in directory 
+   "experiment X 10"  for instance 010 if experiment is 01.0).
+4) Create relaxation  - relax_rmu.sh (TODO:not finished)
+
+And if you want
+X) Try (!) to use plotting routines in plot and plot_save for illustration -
+   this requires some manual labour. There is some info in the hycom user manual
+   
+
+Routines in bin directory:
+------------- - ---------------------------------------------------------
+z_levitus.sh  - interpolates levitus climatology horizontally,
+                the fields are suitable for interpolation on 
+                vertical model grid. input is KSIGMA (thref in
+                blkdat.input). This routine depends on the grid
+                but not on topography.
+z_phc.sh      - Same routine, but uses phc climatology which is better
+                in the Arctic.
+
+relax.sh      - uses output from the two above. It reads blkdat.input 
+                for an experiment to find levels to interpolate to in
+                the vertical. It also depends on the topography of the 
+                experiment (set in EXPT.src and looked up in the  
+                topo/ directory). Input is experiment number (ex 01.0)
+
+old_lev_nersc - Mainly for surface relaxation for "old" forcing option
+                actually used by old nersc forcing functions. (TODO:needs cleanup)
+
+relax_rmu.sh  - Sets up relaxation mask
+blkdat.sh     - help routine used by relax_rmu.sh
+
+

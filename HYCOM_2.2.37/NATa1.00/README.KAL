@@ -1,0 +1,61 @@
+A quick run-through of our new setup
+------------------------------------
+
+
+
+The Top-level region directory
+*********************************************************************************
+The setup is now strictly oriented around the grids. Each of the model main 
+directories may have just one file which is common to all experiments; the file
+regional.grid.[ab]. If you create a new regional.grid file, you should create a new
+main dir (ex NATa1.00). You will also need a file REGION.src in the top-level
+region directory which contains (among other things) the name of the region in
+the environment variable ``R''. 
+
+The files regional.grid.[ab] and grid.info should be placed in the topo/
+subdirectory.
+
+The Experiment directories
+*******************************************************************************
+Experiment directories contain a few key files such as blkdat.input infile.in
+and so on. You should have an example in the directory "expt_01.0". You can call
+the next one expt_01.1, for instance.  Also, to ease the setup, I have created a
+file in the experiment directory called "EXPT.src". The key elements of that
+file is the experiment number X (example 01.0) and E (which is X without the
+period, ex 010).
+
+Another key parameter is topography version which can be different for different
+experiments (for instance one experiment can run with nesting into TOPAZ3,
+another one with nesting into another model).  Topography version starts from 01
+and upwards, always use two digits.
+
+Set the input files in the experiment directory to proper values before
+proceeding with creating input data. blkdat.input is used frequently in the
+setup process, so make sure it is ok.
+
+Creating input data
+******************************************************************************
+No more details here, but the steps are:
+
+1 ) Set up topography and partitioning in the directory topo
+2 ) Set up relaxation/initial climatology in directory relax 
+3 ) Set up forcing climatology in directory force
+4 ) Set up river and other forcing in directory force 
+5 ) Set up tides in tide_nersc and nesting in nest_nersc (if needed)
+
+
+Final steps
+******************************************************************************
+6 ) Compile model - this uses primarily the partitioning set up in the topo
+7 ) Set up data and scratch dirs in experiment directory, set up job scripts and
+    run the model
+
+
+Useful scripts
+******************************************************************************
+The script bin/newRegion.sh under the region directory can be used to set up a
+new region based on a old region.
+
+The script bin/newExpt.sh under the region directory can be used to set up a
+new experiment directory based on a old directory.
+

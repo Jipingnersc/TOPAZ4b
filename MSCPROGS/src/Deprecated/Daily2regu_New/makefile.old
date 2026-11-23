@@ -1,0 +1,177 @@
+VPATH = .:RCS:TMP
+
+.SUFFIXES:
+.SUFFIXES: .o .F90 .f90 .F .f .H .h  
+
+
+#Compiler Options -- serial hands-off version
+#LD = xlf90_r -qspillsize=2152 
+#CF90 = xlf90_r  -qsuffix=f=f90 -qspillsize=2152 -qfree=f90
+#CF77 = xlf90_r -qfixed -qspillsize=2152
+#
+
+
+
+
+#Compiler -- F90
+CF90 = /usr/bin/xlf90_r 
+
+#Compiler -- F77
+CF77 = /usr/bin/xlf90_r 
+
+#Linker 
+LD = /usr/bin/xlf90_r 
+
+#Paralellization opts
+PARO =
+#PARO = -qsmp=omp
+PARO_OE = 
+
+#Size defaults
+SIZEO = -b64 -q64 -qrealsize=8
+
+#Arch opts
+ARCHO= -qarch=auto -qtune=auto -qcache=auto
+
+#Optimalization opts
+#OPTO= -O2 -qstrict
+OPTO= -O3 -qstrict
+# Leave it be.. Something goes wrong in optimizing, 
+# and as long as debugging doesnt quite work on
+# tre, I will stick with this...
+#OPTO= 
+
+#Inlining opts
+#INLO= -Q -qipa
+INLO=
+
+# Diverse options
+DIVO= -qmaxmem=-1 -qnosave
+
+
+
+
+# Flags for debugging -- Note linker halt occurs when using qextchk flag and 
+# passing types as arrays ...
+#DEBUG_FLAGS = -C -qflttrap=underflow:overflow:zerodivide:invalid:enable \
+#	          -qextchk -qinitauto=FF -g
+#DEBUG_FLAGS = -C -qflttrap=underflow:overflow:zerodivide:invalid:enable \
+#	         -qextchk -qinitauto=FF -g
+
+
+F77FLG = -qextname -qfixed                   
+F90FLG = -qextname -qsuffix=f=f90 -qfree=f90 
+
+
+
+FFLAGS    = $(SIZEO) $(OPTO) $(ARCHO) $(PARO)    $(INLO) $(DIVO) 
+#FFLAGS    = $(SIZEO) $(ARCHO) $(PARO)    $(INLO) $(DIVO) $(DEBUG_FLAGS) 
+FFLAGSD   = $(SIZEO) $(ARCHO) $(PARO)    $(INLO) $(DIVO) $(DEBUG_FLAGS) 
+
+# ens_svd requires a rename of LAPACK symbol
+LINKFLAGS1= $(SIZEO) $(OPTO) $(PARO) $(INLO) $(DIVO) 
+LINKFLAGS2= $(SIZEO) $(OPTO) $(PARO) $(INLO) $(DIVO) 
+LINKFLAGS3= $(SIZEO) $(OPTO) $(PARO) $(INLO) $(DIVO) 
+#LINKFLAGS3= $(SIZEO) $(OPTO) $(PARO) $(INLO) $(DIVO)  -brename:.dgesvd_,.dgesvd -brename:.sgesvd_,.sgesvd
+LINKFLAGS4= $(SIZEO) $(OPTO) $(PARO) $(INLO) $(DIVO) 
+LINKFLAGS5= $(SIZEO) $(OPTO) $(PARO) $(INLO) $(DIVO) 
+LINKFLAGS6= $(SIZEO) $(OPTO) $(PARO) $(INLO) $(DIVO) 
+
+
+CPPARCH = -DPWR4 -DIBM -DAIX
+#CPPMODEL  =  -DNPTEST1
+#CPPMODEL  =  -DDIADEM3
+CPPMODEL  =  -DTOPAZ1
+#CPPMODEL  =  -DMONCOZE
+CPPFLAGS =  -P $(CPPARCH) $(CPPMODEL)
+LIBS = -lessl -L$(HOME)/lib -lnetcdf64 -lm -llapack64
+
+
+CPP = /usr/lib/cpp
+
+
+# Rules for running cpp and updating files in TMP directory
+.H.h:
+	rm -f ./TMP/$*.h
+	cat MODEL.CPP $*.H | $(CPP) $(CPPFLAGS) | st.sh > ./TMP/$*.h
+
+
+.F90.o:
+	rm -f ./TMP/$*.f90
+	cat MODEL.CPP $*.F90 | $(CPP) $(CPPFLAGS)  | st.sh > ./TMP/$*.f90
+	cd ./TMP ; $(CF90) -c $(FFLAGS) $(F90FLG) -o $*.o $*.f90  
+
+.F.o:
+	rm -f ./TMP/$*.f
+	cat MODEL.CPP $*.F | $(CPP) $(CPPFLAGS) | st.sh > ./TMP/$*.f
+	cd ./TMP ; $(CF77) -c $(FFLAGS) $(F77FLG) -o $*.o $*.f  
+
+
+
+
+
+TARGET1 = rawdaily2netcdf
+TARGET2 = daily2regunc
+TARGET3 = daily2stationnc
+TARGET4 = daily2sectionnc
+TARGET5 = daily2RMS
+#TARGET4 =  corradii
+#TARGET5 =  enspnt
+#TARGET6 =  icedist
+ 
+all: $(TARGET1) $(TARGET2) $(TARGET3) $(TARGET4) $(TARGET5)
+
+include source.files
+
+INC2 =$(INC1:.H=.h)
+F90FILES1=$(F90FILES) p_rawdaily2netcdf.F90
+F90FILES2=$(F90FILES) p_daily2regunc.F90
+F90FILES3=$(F90FILES) p_daily2stationnc.F90
+F90FILES4=$(F90FILES) p_daily2sectionnc.F90
+F90FILES5=$(F90FILES) p_daily2RMS.F90
+F90FILES6=$(F90FILES) p_icedist.F90
+OMOD = $(MODULES:.F90=.o) $(MODULES77:.F=.o)
+OBJECTS1 = $(F90FILES1:.F90=.o) $(F77FILES:.F=.o)
+OBJECTS2 = $(F90FILES2:.F90=.o) $(F77FILES:.F=.o)
+OBJECTS3 = $(F90FILES3:.F90=.o) $(F77FILES:.F=.o)
+OBJECTS4 = $(F90FILES4:.F90=.o) $(F77FILES:.F=.o)
+OBJECTS5 = $(F90FILES5:.F90=.o) $(F77FILES:.F=.o)
+OBJECTS6 = $(F90FILES6:.F90=.o) $(F77FILES:.F=.o)
+
+
+
+
+
+$(TARGET1): $(INC2) $(OMOD) $(OBJECTS1)  $(DEBOBJ77) $(DEBOBJ90)
+	cd ./TMP ; $(LD) $(LINKFLAGS1) -o ../$(TARGET1) $(OMOD) $(OBJECTS1) $(LIBS) 
+
+$(TARGET2): $(INC2) $(OMOD) $(OBJECTS2)  $(DEBOBJ77) $(DEBOBJ90)
+	cd ./TMP ; $(LD) $(LINKFLAGS2) -o ../$(TARGET2) $(OMOD) $(OBJECTS2) $(LIBS) 
+
+$(TARGET3): $(INC2) $(OMOD) $(OBJECTS3)  $(DEBOBJ77) $(DEBOBJ90)
+	cd ./TMP ; $(LD) $(LINKFLAGS3) -o ../$(TARGET3) $(OMOD) $(OBJECTS3) $(LIBS) 
+
+$(TARGET4): $(INC2) $(OMOD) $(OBJECTS4)  $(DEBOBJ77) $(DEBOBJ90)
+	cd ./TMP ; $(LD) $(LINKFLAGS4) -o ../$(TARGET4) $(OMOD) $(OBJECTS4) $(LIBS) 
+#
+$(TARGET5): $(INC2) $(OMOD) $(OBJECTS5)  $(DEBOBJ77) $(DEBOBJ90)
+	cd ./TMP ; $(LD) $(LINKFLAGS5) -o ../$(TARGET5) $(OMOD) $(OBJECTS5) $(LIBS) 
+
+#$(TARGET6): $(INC2) $(OMOD) $(OBJECTS6)  $(DEBOBJ77) $(DEBOBJ90)
+#	cd ./TMP ; $(LD) $(LINKFLAGS6) -o ../$(TARGET6) $(OMOD) $(OBJECTS6) $(LIBS) 
+ 
+
+clean:
+	cd ./TMP ; rm *.f  *.o *.f90 *.h *.mod
+
+
+new: source depend
+
+source:
+	mksource.sh > source.files
+
+depend:
+	mkdepend.pl | sort -u > depends.file
+
+include depends.file
+

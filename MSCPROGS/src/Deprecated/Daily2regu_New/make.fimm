@@ -1,0 +1,66 @@
+KHOME=/home/fimm/nersc/knutali
+
+
+#Compiler -- F90
+CF90 = pgf90
+
+#Compiler -- F77
+CF77 = $(CF90)
+
+#Compiler -- C
+CC = gcc
+
+#Linker 
+LD = $(CF90)
+
+#Paralellization opts
+PARO =
+#PARO = -qsmp=omp
+PARO_OE = 
+
+#Size defaults
+SIZEO = -r4 
+
+#Arch opts
+ARCHO= 
+
+#Optimalization opts
+OPTO= -fast
+
+#Inlining opts
+INLO=
+
+# Diverse options
+DIVO= -byteswapio -Mcache_align
+
+
+
+
+# Flags for debugging -- Note linker halt occurs when using qextchk flag and 
+# passing types as arrays ...
+#DEBUG_FLAGS=-g -qsigtrap
+DEBUG_FLAGS=
+
+F77FLG = -Mnofree                   
+F90FLG = -Mfree
+
+
+CFLAGS    = 
+FFLAGS    = $(SIZEO) $(OPTO) $(ARCHO) $(PARO)    $(INLO) $(DIVO) 
+FFLAGS    = $(SIZEO) $(ARCHO) $(PARO)    $(INLO) $(DIVO) $(DEBUG_FLAGS) \
+-I$(KHOME)/opt/netcdf-pg/include/ 
+ 
+FFLAGSD   = $(SIZEO) $(ARCHO) $(PARO)    $(INLO) $(DIVO) $(DEBUG_FLAGS) 
+
+LINKFLAGS= $(SIZEO) $(OPTO) $(PARO) $(INLO) $(DIVO)   -Bstatic
+
+
+CPPARCH =  -DIA32 -DREAL4
+CPPFLAGS =  -P $(CPPARCH) $(CPPMODEL) -traditional
+LIBS = -L/local/acml/pgi64/lib/ -lscalapack -lacml \
+-L$(KHOME)/opt/netcdf-pg/lib -lnetcdf
+
+
+CPP = /usr/bin/cpp
+
+

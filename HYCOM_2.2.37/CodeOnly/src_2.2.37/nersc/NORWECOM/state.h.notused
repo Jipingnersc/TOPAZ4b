@@ -1,0 +1,15 @@
+!
+! Include file STATE (fra jarles module.state
+! Inneholder foreloepig bare DynamicDepths variable som
+! alle oppdateres i UPDATEDD
+!
+!
+! 2-D arrays
+!
+      REAL DU(IM,JM),DV(IM,JM)
+      COMMON /DD2/DU,DV
+!
+!3-D arrays
+!
+      REAL DDZ(IM,JM,KB),DUDZ(IM,JM,KB),DVDZ(IM,JM,KB)
+      COMMON /DD3/DDZ,DUDZ,DVDZ

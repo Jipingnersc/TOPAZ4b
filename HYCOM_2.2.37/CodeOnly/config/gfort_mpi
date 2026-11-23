@@ -1,0 +1,64 @@
+# common definitions for Intel Linux/gcc, OpenMP, real*8
+# ---------------------------------------------------------------------
+#
+# MACROS      DESCRIPTIONS:
+#
+# FC:         Fortran 90 compiler.
+# FCFFLAGS:   Fortran 90 compilation flags.
+# CC:         C compiler.
+# CCFLAGS:    C compilation flags.
+# CPP:        cpp preprocessor (may be implied by FC).
+# CPPFLAGS:   cpp -D macro flags.
+# LD:         Loader.
+# LDFLAGS:    Loader flags.
+# EXTRALIBS:  Extra local libraries (if any).
+#
+
+Sysdir=/sw/arch/Centos8/EB_production/2021/software/
+INC0=-I./ -I$(Sysdir)netCDF-Fortran/4.5.3-gompi-2021a/include -I$(Sysdir)/FFTW/3.3.9-gompi-2021a/include -I$(Sysdir)GSL/2.7-GCC-10.3.0/include 
+
+#ARCH0= -g -fdefault-real-8 -std=legacy -ffixed-line-length-none -fopenmp -fimplicit-none -w -fallow-argument-mismatch -fdec 
+ARCH0= -g -fdefault-real-8 -std=legacy -ffixed-line-length-none -fimplicit-none -w -fallow-argument-mismatch -O2 
+#ARCH0= -g -std=legacy -ffixed-line-length-none -fopenmp -fimplicit-none 
+
+
+#FC            =	mpif90
+FC            =	mpifort
+FCFFLAGS      = -O2 -fconvert=big-endian $(ARCH0) $(INC0)
+
+CC            = cc	
+CCFLAGS       =	-O 
+
+LIBS = -lnetcdf -lnetcdff -lfftw3 -lflexiblas -lgsl
+
+LD            =	$(FC)
+LDFLAGS       =	$(FCFFLAGS) $(LIBS) 
+EXTRALIBS     =
+
+
+# CPP, used internally by compilers - note that some compilers
+# need special options for this, consult compiler manual if in trouble
+#CPP= /usr/bin/cpp -P -traditional
+CPP= cpp -P 
+#CPPFLAGS= -DIA32 -DREAL8 -DENDIAN_IO -DFFTW -DLAPACK 
+CPPFLAGS      = -DIA32 -DREAL8 -DSERIAL_IO -DTIMER -DFFTW -DMPI
+
+
+#
+# --- generic make definitions
+#
+SHELL         = /bin/sh
+RM            = \rm -f
+
+#
+# rules.
+#
+
+.c.o:
+	$(CC) $(CPPFLAGS) $(CCFLAGS)  -c $*.c
+
+.f.o:
+	$(FC)             $(FCFFLAGS) -c $*.f
+
+.F.o:
+	$(FC) $(CPPFLAGS) $(FCFFLAGS) -c $*.F

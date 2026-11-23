@@ -1,0 +1,87 @@
+TYPE=mpi
+ARCH=Betzy
+
+CPPFLAGSNERSC := $(CPPFLAGSNERSC) -DNERSC_VERSION -DWEEKLY_AVERAGE \
+                 -DICE -DEVP -DAPPROACH_2 -DDAILY_AVERAGE -DMETNO -DEVP_REDUNDANT \
+                 -DMATS_RELAX -DTEST_ICE_AGE -DDAILY_ENSVAR -DFORCING_INLINE \
+                 -DPARAM_EST -DSEASONAL_PORT -DERA5 -DEVP_DRIFT_ASSIMILATION  -DTRACK_ASSIM \
+	         -DPERTURB_ICE -DSINGLE_RESTART -DSINGLE_RESTART_ONLY 
+
+#  for Assimilation
+#                 -DEVP_DRIFT_ASSIMILATION  -DTRACK_ASSIM \ 
+
+#                 -DICESTATE -DICESTATE_1CLASS -DAPPROACH_2 -DDAILY_AVERAGE \
+#                 -DICE -DAPPROACH_2 -DDAILY_AVERAGE \
+
+#                 -DSINGLE_RESTART_ONLY -DFORCING_INLINE
+#                 -DFORCING_INLINE
+
+# KAL - specific module setup (Cray XT4)
+LIBS := $(LIBS) $(NETCDF_POST_LINK_OPTS)
+FCFFLAGSNERSC := $(FCFFLAGSNERSC) $(NETCDF_INCLUDE_OPTS)
+
+# Files to include in NERSC version of hycom
+ifneq  (,$(findstring -DNERSC_VERSION,$(CPPFLAGSNERSC)))
+   FCFFLAGSNERSC := $(FCFFLAGSNERSC) -I../src_2.2.37/ 
+   OBJECTSNERSC  := $(OBJECTSNERSC) \
+   mod_common_ice.o           \
+   mod_year_info.o            \
+   mod_forcing_nersc.o        \
+   mod_random_forcing.o       \
+   mod_diagnostics.o          \
+   mod_average.o              \
+   mod_daily_average.o        \
+   m_limits.o                 \
+   mod_nesting.o              \
+   mod_gridp.o                \
+   mod_tides_nersc.o          \
+   mod_hycom_nersc.o          \
+   mod_restart.o              \
+   dayfor.o                   \
+   m_icemodels_step.o         \
+   m_icemodels_init.o         \
+   m_thermf_nersc.o           \
+   m_mptestdump.o             \
+   m_icemodels_advect.o 
+
+   # Files to include in NERSC version of hycom, when using EVP
+   ifneq (,$(findstring -DEVP,$(CPPFLAGSNERSC)))
+      OBJECTSNERSC  := $(OBJECTSNERSC) \
+         mod_evp.o                     \
+         m_evp_next_step.o             \
+         m_depthave.o                  \
+         hycomtoevp.o                  \
+         evptohycom.o                  \
+         evp.o                         \
+         evp_prep.o                    \
+         gsl_randgamma.o               \
+         evp_init.o                    \
+         evp_stress.o                  \
+         evp_stress_miz.o              \
+         evp_stepu.o                   \
+         evp_finish.o                  \
+         to_ugrid.o                    \
+         evp_ice_strength.o            \
+         evp_init_from_hycom.o         \
+         mod_raw_io.o 
+   endif
+
+   # Files to include in NERSC version of hycom, when using EVP
+   ifneq (,$(findstring -DICESTATE,$(CPPFLAGSNERSC)))
+      OBJECTSNERSC  := $(OBJECTSNERSC) \
+         mod_icestate.o                \
+         mod_icestate_init.o           \
+         mod_icestate_redist.o         \
+         mod_icestate_diag.o           \
+         mod_icestate_fluxes.o         \
+         mod_icestate_tools.o          \
+         mod_icestate_srfbudget.o      \
+         mod_icestate_hpar.o           \
+         mod_icestate_transfer.o       \
+         m_icestate_exchange.o         \
+         m_icestate_heatsolve.o        \
+         m_icestate_prec.o             \
+         m_icestate_solar.o            \
+         m_icestate_thermf.o           
+   endif
+endif

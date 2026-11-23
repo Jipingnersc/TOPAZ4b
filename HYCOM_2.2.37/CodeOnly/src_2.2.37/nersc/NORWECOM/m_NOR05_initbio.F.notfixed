@@ -1,0 +1,348 @@
+      module m_NOR05_initbio
+
+      contains
+
+      subroutine initbio(H,FSM,DUM,DVM,ZZ,LINN,ZINN,F3D,F2D,NMEAN,
+     +                   S,T,RHO)
+C
+C***BEGIN PROLOGUE INITBIO
+C***DATE WRITTEN   7/7-93
+C***AUTHOR
+C       Morten D. Skogen, morten@imr.no
+C       Institute of Marine Research,
+C       Postboks 1870, N-5024 Bergen-Nordnes, Norway
+C
+C***REVISION DATE 3/11-93 
+C       Morten D. Skogen, morten@imr.no
+C       common block /SOUTH/ is split into a physical (/SOUTH/)
+C       and a biochemical part (/BIOSOUTH/)
+C
+C***PURPOSE INITBIO initiates biological variables.
+C
+C       See the file globals.doc for description of the
+C       global variables.
+C
+C***END PROLOGUE INITBIO
+C
+      implicit none
+      INCLUDE 'sedcom.h'
+C
+C   Global variables.
+C
+      INTEGER IBALT,JBALT
+      COMMON /IJBALT/IBALT,JBALT
+C
+      INTEGER LINN
+      REAL S(IM,JM,KB),T(IM,JM,KB),RHO(IM,JM,KB)
+      REAL H(IM,JM),FSM(IM,JM),DUM(IM,JM),DVM(IM,JM),ZZ(KB)
+      REAL F3D(IM,JM,LINN),F2D(IM,JM),ZINN(LINN)
+      REAL NMEAN(IM,JM,KB)
+C
+C   Local variables
+C
+      INTEGER I,J,K,MM10,NM10
+C
+      CHARACTER*19 NITNAME,PHONAME
+      CHARACTER*18 SILNAME
+C
+C Sediment Boundary variables
+C
+      REAL CSED
+      REAL SISE10(LB,JM,KB),SISEM0(LB,JM,KB),SISE0N(IM,LB,KB)
+      REAL OXYE10(LB,JM,KB),OXYEM0(LB,JM,KB),OXYE0N(IM,LB,KB)
+      REAL YELE10(LB,JM,KB),YELEM0(LB,JM,KB),YELE0N(IM,LB,KB)
+      REAL SEDE10(LB,JM,KB),SEDEM0(LB,JM,KB),SEDE0N(IM,LB,KB)
+C
+      COMMON/SISEXT/SISE10,SISEM0,SISE0N
+      COMMON/OXYEXT/OXYE10,OXYEM0,OXYE0N
+      COMMON/YELEXT/YELE10,YELEM0,YELE0N
+      COMMON/SEDEXT/SEDE10,SEDEM0,SEDE0N
+C
+      REAL SISSOUTH(KB),OXYSOUTH(KB),YELSOUTH(KB),SEDSOUTH(KB)
+      COMMON/SEDSOUTH/SISSOUTH,OXYSOUTH,YELSOUTH,SEDSOUTH
+C
+C SURFACE FLUXES
+C
+      REAL SISSURF(IM,JM),OXYSURF(IM,JM),YELSURF(IM,JM),
+     +     SEDSURF(IM,JM)
+      COMMON/SURFSED/SISSURF,OXYSURF,YELSURF,SEDSURF
+C
+C***FIRST EXECUTABLE STATEMENT INITBIO
+C
+      MM10=IM-LB+1
+      NM10=JM-LB+1
+C
+C   Read in climatologies in physical depths.
+C
+      NITNAME='indata/no3feb90.dir'
+      PHONAME='indata/po4feb90.dir'
+      SILNAME='indata/sifeb90.dir'
+C
+C   Read and transform NIT, PHO, SIL, DIA and FLA into
+C   sigma-coordinates.
+C
+      CALL Z2SIGMA(1,IM,JM,KB,H,FSM,DUM,DVM,
+     +             ZZ,NIT,NITNAME,F3D,F2D,ZINN,12)
+      CALL Z2SIGMA(1,IM,JM,KB,H,FSM,DUM,DVM,
+     +             ZZ,PHO,PHONAME,F3D,F2D,ZINN,12)
+      CALL Z2SIGMA(1,IM,JM,KB,H,FSM,DUM,DVM,
+     +             ZZ,SIL,SILNAME,F3D,F2D,ZINN,12)
+C
+C Initiate DIA and FLA, due to lack of nutrient data, we
+C also initiate NIT, PHO and SIL with typival winter values
+C from stationM
+C
+      DO 10 K = 1,KB
+      DO 10 J = 1,JM
+      DO 10 I = 1,IM
+         DIA(I,J,K) = DIAMIN
+         FLA(I,J,K) = FLAMIN
+      #ifdef CHATONELLA
+         CHA(I,J,K) = CHAMIN
+      #endif
+ 10   CONTINUE
+C
+C  Inflow from the BALTIC
+C
+      DO 20 K = 1,KB-1
+      DO 20 J = 1,3
+         bio(IBALT,j,k,n,1) = NIT(IBALT,4,K)
+         PHO(IBALT,J,K) = PHO(IBALT,4,K)
+         SIL(IBALT,J,K) = SIL(IBALT,4,K)
+         DIA(IBALT,J,K) = DIA(IBALT,4,K)
+         FLA(IBALT,J,K) = FLA(IBALT,4,K)
+      #ifdef CHATONELLA
+         CHA(IBALT,J,K) = CHA(IBALT,4,K)
+      #endif
+ 20   CONTINUE
+C
+C   Zero the arrays in land points.
+C
+      DO 30 K = 1,KB-1
+      DO 30 J = 1,JM
+      DO 30 I = 1,IM
+         NIT(I,J,K) = CNIT*NIT(I,J,K)*FSM(I,J)
+         PHO(I,J,K) = CPHO*PHO(I,J,K)*FSM(I,J)
+         SIL(I,J,K) = CSIL*SIL(I,J,K)*FSM(I,J)
+         DIA(I,J,K) = DIA(I,J,K)*FSM(I,J)
+         FLA(I,J,K) = FLA(I,J,K)*FSM(I,J)
+#ifdef BIO_ECOHAM1
+         IF(K.EQ.KB-1)THEN
+            DET(I,J,K) = DETINIT
+         ELSE
+            DET(I,J,K) = 0.
+         END IF
+#elif defined BIO_NORWECOM
+         DET(I,J,K) = CC(3)*(DIA(I,J,K)+FLA(I,J,K))
+#endif
+      #ifdef CHATONELLA
+         CHA(I,J,K) = CHA(I,J,K)*FSM(I,J)
+         DET(I,J,K) = DET(I,J,K) + CC(3)*CHA(I,J,K)
+      #endif
+ 30   CONTINUE
+      WRITE(*,*)'INITIAL NIT, PHO, SIL (mg/m3)'
+      DO K = 1,12
+        WRITE(*,*)K,NIT(45,30,K),PHO(45,30,K),SIL(45,30,K)
+      END DO
+C
+      DO 40 K = 1,KB
+      DO 40 J = 1,JM
+      DO 40 I = 1,IM
+         NMEAN(I,J,K) = 0.
+ 40   CONTINUE
+C
+      DO 50 J=1,JM
+      DO 50 I=1,IM
+        WNSURF(I,J)=0.
+        WPSURF(I,J)=0.
+        WSISURF(I,J)=0.
+        DETSURF(I,J)=0.
+        DIASURF(I,J)=0.
+        FLASURF(I,J)=0.
+      #ifdef CHATONELLA
+        CHASURF(I,J)=0.
+      #endif
+ 50   CONTINUE
+C
+      IF (SEDIMENT) THEN
+         DO K=1,KB
+            CALL OXYSAT(OXYSURF,RHO(1,1,K),S(1,1,K),T(1,1,K))
+            DO J=1,JM
+               DO I=1,IM
+                  OXY(I,J,K)=OXYSURF(I,J)
+               ENDDO
+            ENDDO
+         ENDDO
+C
+C Initiate SIS, YEL and SED
+C
+      DO 11 K = 1,KB
+      DO 11 J = 1,JM
+      DO 11 I = 1,IM
+         SIS(I,J,K) = 0.
+         YEL(I,J,K) = 0.
+C         SED(I,J,K) = 0.
+ 11   CONTINUE
+C From Eisma
+      DO 12 K = 1,KB
+      DO 12 J = 1,JM
+      DO 12 I = 1,IM
+         CSED=1000.
+         IF ( J .GT. 35. .AND. H(I,J) .GT. 200. ) CSED=200.
+         IF ( J .GT. 35. .AND. H(I,J) .LE. 200. ) CSED=400.
+         IF ( J .LE. 35. .AND. J .GE. 20  ) CSED=600.
+         IF ( J .LE. 35. .AND. J .GE. 20  .AND. I .LT. 45
+     &         .AND. H(I,J) .LE. 60 ) CSED=1000.
+         IF ( J .LT. 20. )                       CSED=1000.
+         IF ( J .LT. 20.  .AND. H(I,J) .GT. 60. ) CSED=600.
+         IF ( J .LT. 15.  .AND. H(I,J) .LE. 60. ) CSED=2000.
+         IF ( J .LT. 20 .AND. I .LT. 53 .AND.
+     &                            H(I,J) .LT. 30) CSED=3000.
+         IF ( J .LT. 20 .AND. I .LT. 53 .AND.
+     &                            H(I,J) .LT. 20) CSED=5000.
+         IF ( I .LT. 10 .AND. J .LT. 30 ) CSED=3000.
+         IF ( I .LT. 10 .AND. J .GE. 30 ) CSED=300.
+         SED(I,J,K) = CSED
+ 12   CONTINUE
+c convert concentrations of spm to mg/l
+c  equal parts of fast (yel) and slow (sed) sinking material
+      do k=1,kb
+         do j=1,jm
+            do i=1,im
+               sed(i,j,k)=0.5*sed(i,j,k)/1000.
+               yel(i,j,k)=0.5*sed(i,j,k)
+            enddo
+         enddo
+      enddo
+C
+C  Inflow from the BALTIC
+C
+      DO 21 K = 1,KB
+      DO 21 J = 1,3
+         SIS(IBALT,J,K) = SIS(IBALT,4,K)
+         OXY(IBALT,J,K) = OXY(IBALT,4,K)
+         YEL(IBALT,J,K) = YEL(IBALT,4,K)
+         SED(IBALT,J,K) = 1000.
+C         SED(IBALT,J,K) = SED(IBALT,4,K)
+ 21   CONTINUE
+C
+C   Zero the arrays in land points.
+C
+      DO 31 K = 1,KB
+      DO 31 J = 1,JM
+      DO 31 I = 1,IM
+         SIS(I,J,K) = SIS(I,J,K)*FSM(I,J)
+         OXY(I,J,K) = OXY(I,J,K)*FSM(I,J)
+         YEL(I,J,K) = YEL(I,J,K)*FSM(I,J)
+         SED(I,J,K) = SED(I,J,K)*FSM(I,J)
+ 31   CONTINUE
+C
+      DO 51 J=1,JM
+      DO 51 I=1,IM
+        SISSURF(I,J)=0.
+        OXYSURF(I,J)=OXY(I,J,1)
+        YELSURF(I,J)=0.
+        SEDSURF(I,J)=0.
+ 51   CONTINUE
+C
+      ENDIF
+C
+C**********************************************************************
+C
+C     FIELD INITIALISATION FOR BOUNDARY CONDITION
+C
+C***********************************************************************
+C
+C    3-D BOUNDARY VALUE ARRAYS
+C
+      DO 110 K = 1,KB
+      DO 110 J = 1,JM
+      DO 110 I = 1,LB
+         NITE10(I,J,K)=NIT(I,J,K)
+         PHOE10(I,J,K)=PHO(I,J,K)
+         SILE10(I,J,K)=SIL(I,J,K)
+         DETE10(I,J,K)=DET(I,J,K)
+         DIAE10(I,J,K)=DIA(I,J,K)
+         FLAE10(I,J,K)=FLA(I,J,K)
+         NITEM0(I,J,K)=NIT(MM10+I-1,J,K)
+         PHOEM0(I,J,K)=PHO(MM10+I-1,J,K)
+         SILEM0(I,J,K)=SIL(MM10+I-1,J,K)
+         DETEM0(I,J,K)=DET(MM10+I-1,J,K)
+         DIAEM0(I,J,K)=DIA(MM10+I-1,J,K)
+         FLAEM0(I,J,K)=FLA(MM10+I-1,J,K)
+      #ifdef CHATONELLA
+         CHAE10(I,J,K)=CHA(I,J,K)
+         CHAEM0(I,J,K)=CHA(MM10+I-1,J,K)
+      #endif
+ 110  CONTINUE
+C
+      DO 120 K = 1,KB
+      DO 120 J = 1,LB
+      DO 120 I = 1,IM
+         NITE0N(I,J,K)=NIT(I,NM10+J-1,K)
+         PHOE0N(I,J,K)=PHO(I,NM10+J-1,K)
+         SILE0N(I,J,K)=SIL(I,NM10+J-1,K)
+         DETE0N(I,J,K)=DET(I,NM10+J-1,K)
+         DIAE0N(I,J,K)=DIA(I,NM10+J-1,K)
+         FLAE0N(I,J,K)=FLA(I,NM10+J-1,K)
+      #ifdef CHATONELLA
+         CHAE0N(I,J,K)=CHA(I,NM10+J-1,K)
+      #endif
+ 120  CONTINUE
+C
+C  Define Initial and Boundary values at the South .
+C
+      DO 130 K = 1,KB
+         NSOUTH(K) = NIT(IBALT,1,K)
+         PSOUTH(K) = PHO(IBALT,1,K)
+         SISOUT(K) = SIL(IBALT,1,K)
+         DETSOUT(K)= DET(IBALT,1,K)
+         DIASOUT(K)= DIA(IBALT,1,K)
+         FLASOUT(K)= FLA(IBALT,1,K)
+      #ifdef CHATONELLA
+         CHASOUT(K)= CHA(IBALT,1,K)
+      #endif
+ 130  CONTINUE
+C
+      IF (SEDIMENT) THEN
+C
+C 3-D BOUNDARY VALUE ARRAYS
+C
+        DO 111 K = 1,KB
+        DO 111 J = 1,JM
+        DO 111 I = 1,LB
+           SISE10(I,J,K)=SIS(I,J,K)
+           OXYE10(I,J,K)=OXY(I,J,K)
+           YELE10(I,J,K)=YEL(I,J,K)
+           SEDE10(I,J,K)=SED(I,J,K)
+           SISEM0(I,J,K)=SIS(MM10+I-1,J,K)
+           OXYEM0(I,J,K)=OXY(MM10+I-1,J,K)
+           YELEM0(I,J,K)=YEL(MM10+I-1,J,K)
+           SEDEM0(I,J,K)=SED(MM10+I-1,J,K)
+ 111    CONTINUE
+C
+        DO 121 K = 1,KB
+        DO 121 J = 1,LB
+        DO 121 I = 1,IM
+           SISE0N(I,J,K)=SIS(I,NM10+J-1,K)
+           OXYE0N(I,J,K)=OXY(I,NM10+J-1,K)
+           YELE0N(I,J,K)=YEL(I,NM10+J-1,K)
+           SEDE0N(I,J,K)=SED(I,NM10+J-1,K)
+ 121    CONTINUE
+C
+C  Define Initial and Boundary values at the South .
+C
+        DO 131 K = 1,KB
+           SISSOUTH(K) = SIS(IBALT,1,K)
+           OXYSOUTH(K) = OXY(IBALT,1,K)
+           YELSOUTH(K) = YEL(IBALT,1,K)
+           SEDSOUTH(K) = SED(IBALT,1,K)
+ 131    CONTINUE
+C
+      ENDIF
+C
+C***END subroutine INITBIO
+C
+      RETURN
+      end subroutine initbio
+      end module m_NOR05_initbio

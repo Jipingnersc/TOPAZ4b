@@ -1,0 +1,111 @@
+122,125c122,123
+<    !call handle_err(NF90_PUT_ATT(ncstate%ncid,NF90_GLOBAL,'title', 'SeaFINE data assimilative reanalysis of the South China Sea'))
+<    call handle_err(NF90_PUT_ATT(ncstate%ncid,NF90_GLOBAL,'title', 'Arctic Ocean Physics Reanalysis (1991-2014), daily surface fields'))
+<    !call handle_err(NF90_PUT_ATT(ncstate%ncid,NF90_GLOBAL,'comment', trim(comment)))
+<    call handle_err(NF90_PUT_ATT(ncstate%ncid,NF90_GLOBAL,'institution',  'NERSC, Thormoehlens gate 47, N-5006 Bergen, Norway'))
+---
+>    call handle_err(NF90_PUT_ATT(ncstate%ncid,NF90_GLOBAL,'title', 'Arctic Ocean Physics Reanalysis'))
+>    call handle_err(NF90_PUT_ATT(ncstate%ncid,NF90_GLOBAL,'institution',  'NERSC, Jahnebakken 3, N-5007 Bergen, Norway'))
+133c131,132
+<    if (hfile%ftype=='archv'.or.hfile%ftype=='archv_wav') then
+---
+>    if (hfile%ftype=='archv'.or.hfile%ftype=='archv_wav'&
+>        .or.hfile%ftype=='archm'.or.hfile%ftype=='archs') then
+149c148,149
+<    if (hfile%ftype=='archv'.or.hfile%ftype=='archv_wav') then
+---
+>    if (hfile%ftype=='archv'.or.hfile%ftype=='archv_wav'&
+>        .or.hfile%ftype=='archm'.or.hfile%ftype=='archs') then
+189a190,191
+>       call handle_err(NF90_PUT_ATT(ncstate%ncid,var_id,'earth_radius',6378273.))
+>       call handle_err(NF90_PUT_ATT(ncstate%ncid,var_id,'proj4',"+proj=stere +lon_0=-45 +lat_0=90 +k=1 +R=6378273 +no_defs"))
+231c233
+<    if (hfile%ftype=='archv') then
+---
+>    if (hfile%ftype=='archv'.or.hfile%ftype=='archm'.or.hfile%ftype=='archs') then
+248c250
+<    if (hfile%ftype=='archv') then
+---
+>    if (hfile%ftype=='archv'.or.hfile%ftype=='archm'.or.hfile%ftype=='archs') then
+304,305c306
+<       call handle_err(NF90_PUT_ATT(ncstate%ncid,var_id,'units','meter'))
+<       !call handle_err(NF90_PUT_ATT(ncstate%ncid,var_id,'units',adjustl(trim(ncstate%char_scale_fac))//' km'))
+---
+>       call handle_err(NF90_PUT_ATT(ncstate%ncid,var_id,'units',adjustl(trim(ncstate%char_scale_fac))//' km'))
+307c308
+<          tmpx(ix)=firstx+(ix-1)*dx*1000
+---
+>          tmpx(ix)=firstx+(ix-1)*dx
+341,342c342
+<       !call handle_err(NF90_PUT_ATT(ncstate%ncid,var_id,'units',adjustl(trim(ncstate%char_scale_fac))//' km'))
+<       call handle_err(NF90_PUT_ATT(ncstate%ncid,var_id,'units','meter'))
+---
+>       call handle_err(NF90_PUT_ATT(ncstate%ncid,var_id,'units',adjustl(trim(ncstate%char_scale_fac))//' km'))
+344c344
+<          tmpy(jy)=firsty+(jy-1)*dy*1000
+---
+>          tmpy(jy)=firsty+(jy-1)*dy
+449a450
+>    integer :: shuffle, deflate, deflate_level !AA Needed for netCDF4 compression
+451,452c452,453
+<    character(len=80) :: stdname, longname, units, vnamenc, cellmethod
+<    integer :: fillval
+---
+>    character(len=85) :: stdname, longname, units, vnamenc, cellmethod
+>    real :: fillval
+501,517c502,513
+<    ! No variable packing in this case
+<    if (limits(2)-limits(1) ==0 ) then
+<       call handle_err(NF90_DEF_VAR(ncstate%ncid,trim(vnamenc),NF90_FLOAT,var_dims,varid))
+<       call handle_err(NF90_PUT_ATT(ncstate%ncid,varid,'_FillValue'   ,real(undef,kind=4)))
+<       call handle_err(NF90_PUT_ATT(ncstate%ncid,varid,'missing_value'   ,real(undef,kind=4)))
+< 
+<    ! Variable packing
+<    else
+<       add_offset  =(limits(2)+limits(1))/2.
+<       scale_factor=(limits(2)-limits(1))/(2**16-10)
+<       fillval     =-(2**16-2)/2
+<       call handle_err(NF90_DEF_VAR(ncstate%ncid,trim(vnamenc),NF90_SHORT,var_dims,varid))
+<       call handle_err(NF90_PUT_ATT(ncstate%ncid,varid,'_FillValue'   ,int(fillval,kind=2)))
+<       call handle_err(NF90_PUT_ATT(ncstate%ncid,varid,'missing_value',int(fillval,kind=2)))
+<       call handle_err(NF90_PUT_ATT(ncstate%ncid,varid,'add_offset'   ,add_offset))
+<       call handle_err(NF90_PUT_ATT(ncstate%ncid,varid,'scale_factor' ,scale_factor))
+<    end if
+---
+>    ! Define variable and set netCDF4 compression
+>    call handle_err(NF90_DEF_VAR(ncstate%ncid,trim(vnamenc),NF90_FLOAT,var_dims,varid))
+>    !If needed, one may set chunksizes, currently disabled 
+>    !call handle_err(NF90_DEF_VAR_CHUNKING(ncstate%ncid,varid,NF90_CHUNKED,chunksizes))
+>    call handle_err(NF90_DEF_VAR_DEFLATE(ncstate%ncid,varid,            &
+>                                                      shuffle = 1,      &
+>                                                      deflate = 1,      &
+>                                                      deflate_level = 5))
+>     fillval=-1.0e12                                            
+>    !Set attributes 
+>    call handle_err(NF90_PUT_ATT(ncstate%ncid,varid,'_FillValue'   ,real(fillval,kind=4)))
+>    call handle_err(NF90_PUT_ATT(ncstate%ncid,varid,'missing_value'   ,real(fillval,kind=4)))
+532,535c528,529
+<    if (limits(2)-limits(1) ==0 ) then
+<       call handle_err(NF90_PUT_VAR(ncstate%ncid,varid,real(field,kind=4)))
+<    else
+<       ! Check for over/undershoot
+---
+>    ! Check for over/undershoot
+>    if (limits(2)-limits(1) /=0 ) then
+545,546c539,541
+<          !fieldint = floor((max(min(field,limits(2)),limits(1)) - add_offset) / scale_factor)
+<          fieldint = min(max(fillval,nint((field - add_offset)/scale_factor)),-fillval)
+---
+>          !fieldint = min(max(fillval,nint((field - add_offset)/scale_factor)),-fillval)
+>          field = max(min(field,-fillval),fillval)
+>          field = max(min(field,limits(2)),limits(1))
+548c543
+<          fieldint=fillval
+---
+>          field=fillval
+550,551c545,546
+<       call handle_err(NF90_PUT_VAR(ncstate%ncid,varid,fieldint))
+<    end if
+---
+>    endif
+>    call handle_err(NF90_PUT_VAR(ncstate%ncid,varid,real(field,kind=4)))

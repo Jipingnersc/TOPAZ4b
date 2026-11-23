@@ -1,0 +1,505 @@
+module m_limits
+
+private :: limits_randf
+
+contains
+subroutine limits(iday1,iday2,randf,lgridp,rungen,dday, yrflag,iniflg, &
+                  imem1,vars,wgrid,refyear,hrefyear,rforce,  &
+                  clmflag,laverage, average_dt, fdiag,ifdiag, ltides,  &
+                  ltideuv, lslows,ctide, rf_hradius,rf_tradius)
+   use mod_xc
+   use mod_diagnostics
+   use mod_forcing_nersc 
+   use mod_average      , only : l_weekly_average_in_code
+   use mod_daily_average, only : l_daily_average_in_code, l_daily_average, l_daily_accum
+   use m_datetojulian
+   use mod_nesting
+   implicit none
+   integer, intent(out) :: iday1   ! rday1 = dday(iday1)%day
+   integer, intent(out) :: iday2   ! rday2 = dday(iday2)%day
+   integer, intent(out) :: average_dt  ! hours beteen averaging for monthly average fields
+   logical, intent(out) :: laverage ! Start from restart file at day rday1
+   logical, intent(out) :: fdiag   ! Dumping tecfile for forcing fields
+   integer, intent(out) :: ifdiag   ! Dumping tecfile for forcing fields
+   logical, intent(out) :: lgridp  ! Store gridpoint data 
+   logical, intent(out) :: randf   ! random forcing is applied
+   character(len=3), intent(out) :: rungen   ! version code for run
+   character(len=4), intent(out) :: wgrid    ! Type of grid to use
+   character(len=5), intent(out) :: rforce   ! Type of focring to use
+   character(len=5), intent(out) :: clmflag  ! Type of climatology forcing to use
+
+   integer, intent(in)  :: imem1    ! Year flag from blkdat
+   integer, intent(in)  :: yrflag   ! Year flag from blkdat
+   integer, intent(in)  :: iniflg   ! Init flag from blkdat (restart=3)
+   logical, intent(out) :: ltides   ! Apply tidal forcing on open boundaries
+   logical, intent(out) :: ltideuv  ! Include tidal currents in addition to sea level
+   logical, intent(out) :: lslows   ! Include tidal currents in addition to sea level
+   character(len=3), intent(out) :: ctide    ! Tidal data (FES or CSR)
+   real   , intent(out) :: rf_hradius  ! Horizontal decorr length for rand forc
+   real   , intent(out) :: rf_tradius  ! Temporal decorr length for rand forc
+
+   type (diass), intent(out) :: dday(0:nrdday) 
+   integer i,itmp
+   type(forcing_variances) vars
+   logical ex
+
+   integer nday1,nhour1    ! Current run starts at nday1,nhour1
+   integer nday2,nhour2    ! Current run ends at nday2,nhour2
+   real rday1    ! Current run starts at rday1
+   real rday2    ! Current run ends at rday2
+   real fversion    ! version of input file
+   integer, intent(out) :: refyear   ! reference year for simulation
+   integer, intent(out) :: hrefyear   ! reference year of hycom
+
+   ! KAL - version bump
+   !real, parameter :: version=2.9     ! version of limits routine
+   real, parameter :: version=3.1     ! version of limits routine
+   real :: baclin, batrop  !Local version - not set from input file any more
+   integer :: seed            !Local version - not set from input file any more
+   !KALinteger :: juld_offset, juld1, juld2, rstsgn
+   integer :: juld_offset,  rstsgn
+   real    :: juld1, juld2
+   integer :: ios, ios2
+
+   character(len=80) :: inputtmp
+   character(len=7 ) :: char7
+
+   !include 'common_blocks.h'
+
+   if (mnproc==1) print '(a)','####################################################'
+   if (mnproc==1) print '(a)','Reading input parameters from infiles "limits"'
+   average_dt=0
+
+
+   inquire(file='infile.in',exist=ex)
+   if (.not.ex) then
+      if (mnproc==1) write(lp,*) 'ERROR: infile.in does not exist'
+      call xcstop('(limits)')
+      stop '(limits)'
+   endif
+   if (mnproc==1) write(*,'(a)')'### infile.in'
+   open(10,file='infile.in',action='read')
+   read(10,*)fversion
+   if (version /= fversion) then
+      if (mnproc==1) write(lp,*) 'Wrong version of input file infile.in'
+      if (mnproc==1) write(lp,*) 'Expected version is: ',version
+      if (fversion == 2.8) then
+         if (mnproc==1) write(lp,*) 'have now introduced:'
+         if (mnproc==1) write(lp,*) 'lslowtide'
+         if (mnproc==1) write(lp,*) 'day hour rather than day.dec for diag days'
+      else if (fversion == 2.9) then
+         if (mnproc==1) then
+            write(lp,*) 'Changes relative to 2.9:'
+            write(lp,*) 'restart flag removed (to blkdat.input)'
+            write(lp,*) 'Ensemble member moved (input argument)'
+            write(lp,*) 'Added climatology option (after force option)'
+            write(lp,*) 'baroclinic time step moved (to blkdat.input)'
+            write(lp,*) 'barotropic time step moved (to blkdat.input)'
+            write(lp,*) 'Added daily average option (after weekly average option)'
+            write(lp,*) 'Accumulate sections removed (post processing routine)'
+            write(lp,*) 'Movie option removed '
+         end if
+      else if (fversion == 3.0) then
+         if (mnproc==1) then
+            write(lp,*) 'Changes relative to 3.0:'
+            write(lp,*) 'River flag removed (set in blkdat.input)'
+         end if
+      endif
+      call xcstop('(limits)')
+      stop '(limits)'
+   endif
+   read(10,'(a3)') rungen
+   if (mnproc==1) write(*,'(a,a3)')   'infile.in:  rungen  = ',rungen
+
+   read(10,*)refyear
+   if (mnproc==1) write(*,'(a,i4)')   'infile.in:  refyear = ',refyear
+
+   read(10,*)nday1,nhour1
+   rday1=float(nday1)+float(nhour1)/24.0
+   if (mnproc==1) write(*,'(a,i4,i3,a,f8.2)') 'infile.in: start at = ',nday1,nhour1,' or ',rday1
+
+   read(10,*)nday2,nhour2
+   rday2=float(nday2)+float(nhour2)/24.0
+   if (mnproc==1) write(*,'(a,i4,i3,a,f8.2)') 'infile.in:  end at  = ',nday2,nhour2,' or ',rday2
+
+   read(10,'(a4)') wgrid
+   if (mnproc==1) write(*,'(a,a4)')   'infile.in:  wgrid   = ',wgrid
+
+   ! KAL - now accepts climate option
+   !read(10,'(a5)')rforce       
+   read(10,'(a5,x,a5)')rforce,clmflag
+   if (mnproc==1) write(*,'(a,a5,a,a5)')   'infile.in:  rforce  = ',rforce, &
+      ', clmflag = ',clmflag
+   if (rforce == 'ecmwf' .or. rforce == 'month' .or. rforce == 'waner' .or. &
+       rforce == 'nwagr' .or. rforce == 'ncepr' .or. rforce == 'arc01' .or. &
+       rforce == 'metno' .or. rforce == 'era40'.or. rforce == 'ecmo'   .or. &
+       rforce=='storm') then
+   else
+      if (mnproc==1)  &
+      write(lp,*) 'limits: invalid option for rforce:'//rforce
+      call xcstop('(limits)')
+      stop '(limits)'
+   endif
+
+   ! Check climate option - can also be used in synoptic forcing
+   if (trim(clmflag)/='old'.and.trim(clmflag)/='era40'.and.trim(clmflag)/='prep') then
+      if (mnproc==1) then
+         write(*,'(a)') 'infile.in:  WARNING: Unknown climate flag '//clmflag
+         write(*,'(a)') 'infile.in:  Use era40 or old '
+      end if
+      call xcstop('(limits)')
+      stop '(limits)'
+   end if
+
+   ! Consistency check vs yrflag
+   if (yrflag==3) then 
+
+      hrefyear=1901
+
+      if (rforce == 'month') then 
+         if (mnproc==1) then
+            write(lp,*) ' For yrflag==3 use synoptic forcing'
+            write(lp,*) ' Current forcing is '//rforce
+         end if
+         call xcstop('(limits)')
+         stop '(limits)'
+      end if
+
+      if (refyear<1901) then
+         if (mnproc==1) then
+            write(lp,*) ' For yrflag==3 refyear>=1901'
+         end if
+         call xcstop('(hycom)')
+         stop '(hycom)'
+      end if
+   else if (yrflag==0) then 
+
+      hrefyear=refyear
+
+      if (rforce /= 'month') then 
+         if (mnproc==1) then
+            write(lp,*) ' For yrflag==0 use climatology forcing'
+            write(lp,*) ' Current forcing is '//rforce
+         end if
+         call xcstop('(limits)')
+      end if
+
+      if (refyear.ne.0 .and. yrflag==0) then
+         if (mnproc==1) then
+            write(lp,*) ' For yrflag==0 refyear=0'
+         end if
+         call xcstop('(limits)')
+         stop '(limits)'
+      end if
+
+   else
+      if (mnproc==1)&
+      write (lp,*) 'Only yrflag=3 or 0 supported at the moment..'
+      call xcstop('(limits)')
+      stop '(limits)'
+   end if
+
+
+   read(10,*)time_trelax
+   if (mnproc==1) write(*,'(a,f9.3)') 'infile.in:  time_trelax    = ',time_trelax
+
+   read(10,*)time_srelax
+   if (mnproc==1) write(*,'(a,f9.3)') 'infile.in:  time_srelax    = ',time_srelax
+
+   ! relaxation should be switched off in blkdat.input
+   if ( time_trelax < 1.0   .or. time_srelax < 1.0 ) then
+      if (mnproc==1) write(*,'(a)') 'Error: Surface relaxation times are too low!'
+      if (mnproc==1) write(*,'(a)') '(If you want to turn off surface relaxation'
+      if (mnproc==1) write(*,'(a)') ' do it in blkdat.input)'
+      call xcstop('(limits)')
+      stop '(limits)'
+   end if
+
+   read(10,'(l1,tr1,i2)')fdiag,ifdiag
+   if (mnproc==1) write(*,'(a,l1,tr1,i2)') 'infile.in:  fdiag     = ',fdiag,ifdiag
+
+   read(10,'(l1,tr1,i2)')laverage,average_dt
+   if (mnproc==1) write(*,'(a,l1,i3)')'infile.in:  ave_dt    = ',laverage,average_dt
+
+   ! Test if weekly averages is actually compiled into model
+   if (.not.l_weekly_average_in_code.and.laverage) then
+      if (mnproc==1) then
+         write(lp,'(a)') 'FATAL: Weekly averages is not compiled into '
+         write(lp,'(a)') '       code, you need to recompile code with'
+         write(lp,'(a)') '       CPP Flag "WEEKLY_AVERAGE" defined,  '
+         write(lp,'(a)') '       or switch off averages altogether... '
+      end if
+      call xcstop('(limits)')
+      stop '(limits)'
+   end if
+
+   !read(10,'(l1,x,l1)') l_daily_average, l_daily_accum
+   read(10,*) l_daily_average, l_daily_accum
+   if (mnproc==1) write(*,'(a,l1,x,l1)')'infile.in:  daily_ave = ',l_daily_average,l_daily_accum
+
+   ! Test if weekly averages is actually compiled into model
+   if (.not.l_daily_average_in_code.and.l_daily_average) then
+      if (mnproc==1) then
+         write(lp,'(a)') 'FATAL: Daily  averages is not compiled into '
+         write(lp,'(a)') '       code, you need to recompile code with'
+         write(lp,'(a)') '       CPP Flag "DAILY_AVERAGE" defined,  '
+         write(lp,'(a)') '       or switch off daily averages altogether... '
+      end if
+      call xcstop('(limits)')
+      stop '(limits)'
+   end if
+  
+  
+
+   read(10,'(l1,tr1,i2)')lnesto,nestdto
+   if (mnproc==1) write(*,'(a,l1,tr1,i3)')'infile.in:  nesto     = ',lnesto,nestdto
+#ifndef NEST_OUTER
+   if (lnesto) then
+      if (mnproc==1) then
+         write(lp,'(a)') 'Nesting switched on at runtime but not at compile-time'
+         write(lp,'(a)') 'Re-compile model with CPP-flag NEST_OUTER defined'
+      end if
+      call xcstop('(limits)')
+      stop '(limits)'
+   end if
+#endif
+
+#if defined (NEST_OFFLINE)
+   read(10,'(a80)') inputtmp
+   read(inputtmp,'(l1,tr1,a7)')lnesti,char7
+   !print *,inputtmp
+   !print *,lnesti
+   !print *,char7
+   if (char7=='OFFLINE') then
+      nest_option=1 ! Initial value
+      nestdti=24 ! Not really used, but set it to something
+   else
+      nest_option=0
+      read(inputtmp,'(l1,tr1,i2)')lnesti,nestdti
+   end if
+   print *,'nest_option:',nest_option
+   print *,'nestdti    :',nestdti
+#else
+   read(10,'(l1,tr1,i2)')lnesti,nestdti
+#endif
+   if (mnproc==1) write(*,'(a,l1,tr1,i3)')'infile.in:  nesti     = ',lnesti,nestdti
+#ifndef NEST_INNER
+   if (lnesti) then
+      if (mnproc==1) then
+         write(lp,'(a)') 'Nesting switched on at runtime but not at compile-time'
+         write(lp,'(a)') 'Re-compile model with CPP-flag NEST_INNER defined'
+      end if
+      call xcstop('(limits)')
+      stop '(limits)'
+   end if
+#endif
+
+   read(10,'(l1,tr1,a3,tr1,l1,tr1,l1)')ltides,ctide,ltideuv,lslows
+   if (mnproc==1) write(*,'(a,l1,tr1,a3,tr1,l1,tr1,l1)')'infile.in:  tides     = ',&
+                                       ltides,ctide,ltideuv,lslows
+
+   read(10,'(l1)')lgridp
+   if (mnproc==1) write(*,'(a,l1)')   'infile.in:  lgridp  = ',lgridp
+
+   read(10,*)
+   do i=0,nrdday
+      read(10,'(t3,i4,t8,i2,t12,l1,t18,l1,t27,l1)',end=100,err=100)&
+                  dday(i)%nday, dday(i)%nhour, dday(i)%ass, dday(i)%dia, dday(i)%res
+      if (dday(i)%nhour > 23) then
+         if (mnproc==1) write(lp,*) 'nhour must be integer in (0,..,23).  See line ',i+1
+         call xcstop('(limits)')
+         stop '(limits)'
+      endif
+      dday(i)%day=float(dday(i)%nday)+float(dday(i)%nhour)/24.0
+   enddo
+   100 iday2=i-1
+
+   close(10)
+
+   if (laverage) then
+      if (average_dt == 0) then
+         if (mnproc==1) write(lp,*) 'infile.in:  laverage is true and average_dt =0'
+         if (mnproc==1) write(lp,*) 'infile.in:  Correct parameter in infile.in'
+         if (mnproc==1) write(lp,*) 'infile.in:  Check location in limits.F90'
+         call xcstop('(limits)')
+         stop '(limits)'
+      endif
+      if (mod(24,average_dt) /= 0) then
+         if (mnproc==1) write(lp,*) 'infile.in:  laverage is true and average_dt not an integer in 24'
+         if (mnproc==1) write(lp,*) 'infile.in:  valid numbers are 1,2,3,4,6,8,12,24'
+         if (mnproc==1) write(lp,*) 'infile.in:  Correct parameter in infile.in'
+         if (mnproc==1) write(lp,*) 'infile.in:  Check location in limits.F90'
+      endif
+   endif
+
+
+
+   iday1=0
+   
+!Testing parameters for inconsistencies
+! Restart require rday1>0 and restart to be true
+   if ((rday1 > 0.0.or.refyear>0).and.(iniflg/=3)) then
+      if (mnproc==1) write(lp,*) 'infile.in: nday > 0 and not restart'
+      call xcstop('(limits)')
+      stop '(limits)'
+   endif
+
+! A diagnostic time equal to rday1 must also be given
+   if (iniflg==3) then
+      iday1=-1
+      do i=0,iday2
+         if (dday(i)%day == rday1) then
+            iday1=i
+            exit
+         endif
+      enddo
+
+      if (iday1 == -1 ) then
+         if (mnproc==1) write(lp,*) 'infile.in: Problem with restart time vs diagno time'
+         if (mnproc==1) write(lp,*) ' A diagnostic time equal to rday1 must be given'
+         call xcstop('(limits)')
+         stop '(limits)'
+      endif
+   endif
+
+
+   if ((iniflg/=3).and.(rday1 /= dday(0)%day)) then
+      if (mnproc==1) write(lp,*) 'infile.in: rday1=',rday1,' should be equal to dday(0)%day:',dday(0)%day 
+      call xcstop('(limits)')
+      stop '(limits)'
+   endif
+
+
+   itmp=iday2
+   do i=iday1+1,itmp
+      if (dday(i)%day > rday2) then
+         iday2=i-1
+         exit
+      endif
+   enddo
+
+   if (iday1 == iday2) then
+      if (mnproc==1) write(lp,*) 'infile.in: Warning: iday1=iday2=',iday1
+      if (mnproc==1) write(lp,*) 'infile.in: No integration will be performed'
+   endif
+         
+   do i=iday1+1,iday2
+      if (dday(i)%day <= dday(i-1)%day) then
+         if (mnproc==1) write(lp,*) 'infile.in: Inconsistency in sequence of diagnostic times'
+         call xcstop('(limits)')
+         stop '(limits)'
+      endif
+   enddo
+
+   if (dday(iday2)%day /= rday2) then
+      print *,'rday2      ',rday2
+      print *,'day(iday2) ',dday(iday2)
+      if (mnproc==1) write(lp,*) 'infile.in: day(iday2) /= rday2'
+      call xcstop('(limits)')
+      stop '(limits)'
+   endif
+
+   juld_offset = float(datetojulian(refyear,1,1,hrefyear,1,1))
+   juld1=float(datetojulian(refyear,1,1,hrefyear,1,1))
+   juld1=juld1+dday(iday1)%day
+   juld2=float(datetojulian(refyear,1,1,hrefyear,1,1))
+   juld2=juld2+dday(iday2)%day
+
+!      hrefyear=refyear
+!      juld1=float(datetojulian(refyear,1,1,hrefyear,1,1))
+!      juld1=juld1+dday(iday1)%day
+!      juld2=float(datetojulian(refyear,1,1,hrefyear,1,1))
+!      juld2=juld2+dday(iday2)%day
+!      juld_offset=0
+
+   rstsgn=1
+   if (yrflag==3 .or. iniflg<3) rstsgn=-1
+   if (mnproc==1.and.imem1==1) then
+      open(10,file='limits',status='replace')
+      !print *,juld1,juld2,hrefyear,dday(iday1)%day,dday(iday2)%day
+      write(10,*) rstsgn*juld1,juld2
+      close(10)
+   end if
+
+
+   if (mnproc==1) write(*,'(a,i5)') 'limits:  iday1 = ',iday1
+   if (mnproc==1) write(*,'(a,i5)') 'limits:  iday2=  ',iday2
+   do i=iday1,iday2
+   if (mnproc==1) print '(a,i3,i5,i3,f8.2,3l8)','limits:  ddays are:',i,dday(i)
+   enddo
+   if (mnproc==1) print '(a)','####################################################'
+   if (mnproc==1) print '(a)','Randfom forcing parameters:'
+   call limits_randf(vars,rf_hradius,rf_tradius,randf)
+   if (mnproc==1) print '(a)','####################################################'
+   if (mnproc==1) write(*,*)
+
+end subroutine limits
+
+
+subroutine limits_randf(vars,rf_hradius,rf_tradius,randf)
+   use mod_forcing_nersc
+   implicit none
+   real, parameter :: version2=1.2     ! version of limits routine
+   real   , intent(out) :: rf_hradius, rf_tradius
+   logical, intent(out) :: randf
+   type(forcing_variances), intent(out) :: vars
+
+   logical :: ex
+   integer :: seed
+   real    :: fversion
+
+
+   inquire(file='infile2.in',exist=ex)
+   if (.not.ex) then
+      if (mnproc==1) write(lp,*) 'ERROR: infile2.in does not exist'
+      call xcstop('(limits)')
+      stop '(limits)'
+   endif
+
+   open(99,file='infile2.in',status='old',action='read')
+   call blkinr(fversion, 'fversn','(a6," =",f10.4," ")')
+   if (abs(version2-fversion)>1e-4) then
+      if (mnproc==1) write(lp,*) 'Wrong version of input file infile2.in'
+      if (mnproc==1) write(lp,*) 'Expected version is',version2
+      if (mnproc==1) write(lp,*) 'file     version is',fversion
+      call xcstop('(limits)')
+      stop '(limits)'
+   endif
+   !read(10,*)randf
+   !read(10,*)seed
+   !read(10,*)vars%taux
+   !read(10,*)vars%tauy
+   !read(10,*)vars%wndspd
+   !read(10,*)vars%clouds
+   !read(10,*)vars%airtmp
+   !read(10,*)vars%precip
+   !read(10,*)vars%relhum
+   !read(10,*,iostat=ios) rf_hradius
+   !read(10,*,iostat=ios2) rf_tradius
+   call blkinl(randf        ,'randf ')
+   call blkini(seed         ,'seed  ')
+   call blkinr(vars%slp     ,'vslp  ','(a6," =",g10.4," mBar**2")')
+   call blkinr(vars%taux    ,'vtaux ','(a6," =",g10.4," N**2m**-4")')
+   call blkinr(vars%tauy    ,'vtauy ','(a6," =",g10.4," N**2m**-4")')
+   call blkinr(vars%wndspd  ,'vwspd ','(a6," =",g10.4," m**2s**-2")')
+   call blkinr(vars%clouds  ,'vcloud','(a6," =",g10.4," []")')
+   call blkinr(vars%airtmp  ,'vtair ','(a6," =",g10.4," C**2")')
+   call blkinr(vars%precip  ,'vprcp ','(a6," =",g10.4," ")')
+   call blkinr(vars%relhum  ,'vrlhum','(a6," =",g10.4," []")')
+   call blkinr(rf_hradius   ,'scorr ','(a6," =",g10.4," m")')
+   call blkinr(rf_tradius   ,'tcorr ','(a6," =",g10.4," days")')
+   call blkini(rf_prsflg    ,'prsflg')
+
+   if (rf_prsflg>2 .or. rf_prsflg<0) then
+      if (mnproc==1) then
+         write(lp,*) 'Pressure flag must be between 0 and 2'
+      end if
+      call xcstop('(limits:limits_randf)')
+      stop '(limits:limits_randf)'
+   end if
+   close(99)
+
+end subroutine limits_randf
+
+
+end module

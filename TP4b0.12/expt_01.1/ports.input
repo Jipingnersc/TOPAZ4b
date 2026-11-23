@@ -1,0 +1,17 @@
+   2                                                'nports   ' = number of ports
+   1                                                'pefold   ' = port transport e-folding time in days
+   4                                                'kdport   ' = port orientation (1=N, 2=S, 3=E, 4=W)
+ 222                                                'ifport   ' = first i-index
+ 222                                                'ilport   ' = last  i-index (=ifport for east/west port)
+ 813                                                'jfport   ' = first j-index
+ 836                                                'jlport   ' = last  j-index (=jfport for north/south port)
+   0.0                                              'svpnow   ' = existing port transport in Sv (+ve towards E or S)
+   0.7                                              'svport   ' = target   port transport in Sv (+ve towards E or S)
+   3                                                'kdport   ' = port orientation (1=N, 2=S, 3=E, 4=W)
+ 800                                                'ifport   ' = first i-index
+ 800                                                'ilport   ' = last  i-index (=ifport for east/west port)
+   2                                                'jfport   ' = first j-index
+  30                                                'jlport   ' = last  j-index (=jfport for north/south port)
+   0.0                                              'svpnow   ' = existing port transport in Sv (+ve towards E or S)
+   0.7                                              'svport   ' = target   port transport in Sv (+ve towards E or S)
+

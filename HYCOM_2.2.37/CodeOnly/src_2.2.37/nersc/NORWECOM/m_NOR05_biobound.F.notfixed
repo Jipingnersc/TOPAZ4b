@@ -1,0 +1,321 @@
+      module m_NOR05_biobound
+      contains
+      subroutine biobound(IDX,NDATE)
+!
+!            BOUND is a modified version of a
+!            boundary condition routine written by
+!            E. A. Martinsen DNMI .
+!
+!***PURPOSE BOUND relaxes the solution in the FRS-zone
+!           towards a specified FRS-zone solution.
+!
+!***DESCRIPTION
+!           BOUND uses the FRS-bondary condition to specify
+!           the solution in specified boundary zones.
+!
+!   ON ENTRY
+!     IDX    Integer.
+!            If IDX = 1, NIT is updated in the FRS-zone
+!            If IDX = 2, PHO         -- " --
+!            If IDX = 3, SIL         -- " --
+!            If IDX = 4, DIA         -- " --
+!            If IDX = 5, FLA         -- " --
+!            If IDX = 6, DET         -- " --
+!            If IDX = 7, SIS         -- " --
+!            If IDX = 8, OXY         -- " --
+!            If IDX = 9, SED         -- " --
+!            If IDX =10, YEL         -- " --
+!            If IDX =11, CHA         -- " --
+!
+!***ROUTINES CALLED RELAX
+!***END PROLOGUE BOUND
+!
+      use mod_xc
+      use mod_necessary_ecovars
+
+!   Global variables
+!
+      IMPLICIT NONE
+      INCLUDE 'sedcom.h'
+      include 'biocom.h'
+!
+      INTEGER IDX,NDATE(5)
+!
+      INTEGER IBALT,JBALT
+      COMMON /IJBALT/IBALT,JBALT
+!
+      INTEGER I,J,K
+      REAL BALTPH(12),BALTSI(12),BALTNI(12),BALTDET
+      DATA BALTPH/0.57,0.63,0.60,0.26,0.16,0.15,0.09,0.13,0.13,0.27
+     & ,0.34,0.31/
+      DATA BALTSI/11.6,12.3,12.4,4.37,5.17,3.41,7.04,7.73,7.67,9.35
+     & ,8.04,10.8/
+      DATA BALTNI/4.53,5.02,4.88,1.73,0.79,0.47,0.74,0.45,0.58,1.01
+     & ,1.33,2.79/
+      DATA BALTDET/5./
+!
+      REAL SISE10(LB,JM,KB),SISEM0(LB,JM,KB),SISE0N(IM,LB,KB)
+      REAL OXYE10(LB,JM,KB),OXYEM0(LB,JM,KB),OXYE0N(IM,LB,KB)
+      REAL YELE10(LB,JM,KB),YELEM0(LB,JM,KB),YELE0N(IM,LB,KB)
+      REAL SEDE10(LB,JM,KB),SEDEM0(LB,JM,KB),SEDE0N(IM,LB,KB)
+      COMMON/SISEXT/SISE10,SISEM0,SISE0N
+      COMMON/OXYEXT/OXYE10,OXYEM0,OXYE0N
+      COMMON/YELEXT/YELE10,YELEM0,YELE0N
+      COMMON/SEDEXT/SEDE10,SEDEM0,SEDE0N
+      REAL SISSOUTH(KB),OXYSOUTH(KB),YELSOUTH(KB),SEDSOUTH(KB)
+      COMMON/SEDSOUTH/SISSOUTH,OXYSOUTH,YELSOUTH,SEDSOUTH
+!
+      REAL SDUM10(LB,JM,KB),SDUMM0(LB,JM,KB),SDUM0N(IM,LB,KB)
+!----------------------------------------------------------------
+      IF (IDX.EQ.1) THEN
+!----------------------------------------------------------------
+!   Update NIT at the boundaries.
+!
+        SDUM10 = 0.
+        SDUMM0 = 0.
+        SDUM0N = 0.
+!
+!   Apply RELAX in all FRS-zones.
+!
+        CALL RELAX(NITE10,SDUM10,NITEM0,SDUMM0,NITE0N,SDUM0N,NIT,1,KB-1)
+!
+! Update NIT at the inflow from the Baltic.
+!
+        DO K = 1,kb-1 
+! CH251005:NB: skal det vare kdm-1??????        
+          bio(IBALT,1,k,n,1) = BALTNI(NDATE(2))*CNIT + 
+      &                    MAX(.1,(BALTDET-BALTNI(NDATE(2))))*CNIT
+        END DO
+!
+        DO 10 K = 1,kdm-1
+        DO 10 J = 1-margin,jj+margin
+        DO 10 I = 1-margin,ii+margin
+           bio(i,j,k,n,1)=bio(i,j,k,n,1)*ip(I,J)
+ 10     CONTINUE
+!
+!----------------------------------------------------------------
+      ELSE IF (IDX.EQ.2) THEN
+!----------------------------------------------------------------
+!   Update PHO at the boundaries.
+!
+        SDUM10 = 0.
+        SDUMM0 = 0.
+        SDUM0N = 0.
+!
+        CALL RELAX(PHOE10,SDUM10,PHOEM0,SDUMM0,PHOE0N,SDUM0N,PHO,1,KB-1)
+!
+        DO K = 1,KB-1
+          bio(IBALT,1,k,n,2) = BALTPH(NDATE(2))*CPHO
+        END DO
+!
+        DO 20 K = 1,KB-1
+        DO 20 J = 1-margin,jj+margin
+        DO 20 I = 1-margin,ii+margin
+           bio(i,j,k,n,2)=bio(i,j,k,n,2)*ip(I,J)
+ 20     CONTINUE
+!
+!----------------------------------------------------------------
+      ELSE IF (IDX.EQ.3) THEN
+!----------------------------------------------------------------
+!   Update SIL at the boundaries.
+!
+        SDUM10 = 0.
+        SDUMM0 = 0.
+        SDUM0N = 0.
+!
+        CALL RELAX(SILE10,SDUM10,SILEM0,SDUMM0,SILE0N,SDUM0N,SIL,1,KB-1)
+!
+        DO K = 1,KB-1
+          bio(IBALT,1,k,n,3) = BALTSI(NDATE(2))*CSIL
+        END DO
+!
+        DO 30 K = 1,KB-1
+        DO 30 J = 1-margin,jj+margin
+        DO 30 I = 1-margin,ii+margin
+           bio(i,j,k,n,3)=bio(i,j,k,n,3)*ip(I,J)
+ 30     CONTINUE
+
+!----------------------------------------------------------------
+      ELSE IF (IDX.EQ.4) THEN
+!----------------------------------------------------------------
+!   Update DIA at the boundaries.
+!
+        SDUM10 = 0.
+        SDUMM0 = 0.
+        SDUM0N = 0.
+!
+        CALL RELAX(DIAE10,SDUM10,DIAEM0,SDUMM0,DIAE0N,SDUM0N,
+     &         bio(:,:,:,:,7),1,KB-1)
+!
+        DO K = 1,KB-1
+          bio(IBALT,1,K,n,7) = DIASOUT(K)
+        END DO
+!
+        DO 40 k = 1,KB-1
+        DO 40 j = 1-margin,jj+margin
+        DO 40 i = 1-margin,ii+margin
+           bio(i,j,k,n,7)=bio(i,j,k,n,7)*ip(I,J)
+ 40     CONTINUE
+
+!----------------------------------------------------------------
+      ELSE IF (IDX.EQ.5) THEN
+!----------------------------------------------------------------
+!   Update FLA at the boundaries.
+!
+        SDUM10 = 0.
+        SDUMM0 = 0.
+        SDUM0N = 0.
+!
+        CALL RELAX(FLAE10,SDUM10,FLAEM0,SDUMM0,FLAE0N,SDUM0N
+     &   ,bio(:,:,:,:,6),1,KB-1)
+!
+        DO k = 1,KB-1
+          bio(IBALT,1,k,n,6) = FLASOUT(K)
+        END DO
+!
+        DO 50 k = 1,KB-1
+        DO 50 j = 1-margin,jj+margin
+        DO 50 i = 1-margin,ii+margin
+           bio(i,j,k,n,6)=bio(i,j,k,n,6)*ip(i,j)
+ 50     CONTINUE
+
+!----------------------------------------------------------------
+      ELSE IF (IDX.EQ.6) THEN
+!----------------------------------------------------------------
+!   Update DET at the boundaries.
+!
+        SDUM10 = 0.
+        SDUMM0 = 0.
+        SDUM0N = 0.
+!
+        CALL RELAX(DETE10,SDUM10,DETEM0,SDUMM0,DETE0N,SDUM0N,DET,1,KB-1)
+!
+        DO K = 1,KB-1
+          bio(IBALT,1,k,n,4) = MAX(.1,BALTDET-BALTNI(NDATE(2)))*CNIT
+        END DO
+!
+        DO 60 k = 1,KB-1
+        DO 60 j= 1-margin,jj+margin
+        DO 60 i = 1-margin,ii+margin
+           bio(i,j,k,n,4)=bio(i,j,k,n,4)*ip(I,J)
+ 60     CONTINUE
+!----------------------------------------------------------------
+      ELSE IF (IDX.EQ.7) THEN
+!----------------------------------------------------------------
+!   Update SIS at the boundaries.
+!
+        SDUM10 = 0.
+        SDUMM0 = 0.
+        SDUM0N = 0.
+!
+        CALL RELAX(SISE10,SDUM10,SISEM0,SDUMM0,SISE0N,SDUM0N,SIS,1,KB-1)
+!
+        DO K = 1,KB-1
+          bio(IBALT,1,k,n,5) = SISSOUTH(K)
+        END DO
+!
+        DO 70 k = 1,KB-1
+        DO 70 j = 1-margin,jj+margin
+        DO 70 i = 1-margin,ii+margin
+           bio(i,j,k,n,5)=bio(i,j,k,n,5)*ip(I,J)
+ 70     CONTINUE
+!----------------------------------------------------------------
+      ELSE IF (IDX.EQ.8) THEN
+!----------------------------------------------------------------
+!   Update OXY at the boundaries.
+!
+        SDUM10 = 0.
+        SDUMM0 = 0.
+        SDUM0N = 0.
+!
+        CALL RELAX(OXYE10,SDUM10,OXYEM0,SDUMM0,OXYE0N,SDUM0N,OXY,1,KB-1)
+!
+        DO k = 1,kb-1
+!         bio(IBALT,1,K) = OXYSOUTH(1)
+          bio(IBALT,1,k,n,8) = bio(IBALT+6,6,1,n,8)
+        END DO
+!
+        DO 80 k = 1,KB-1
+        DO 80 j = 1-margin,jj+margin
+        DO 80 i = 1-margin,ii+margin
+           bio(i,j,k,n,7)=bio(i,j,k,n,7)*ip(I,J)
+ 80     CONTINUE
+!----------------------------------------------------------------
+      ELSE IF (IDX.EQ.9) THEN
+!----------------------------------------------------------------
+!   Update SED at the boundaries.
+!
+        SDUM10 = 0.
+        SDUMM0 = 0.
+        SDUM0N = 0.
+!
+        CALL RELAX(SEDE10,SDUM10,SEDEM0,SDUMM0,SEDE0N,SDUM0N,SED,1,KB-1)
+!
+        DO K = 1,KB-1
+          SED(IBALT,1,K) = 1.
+        END DO
+!
+        DO 90 k = 1,KB-1
+        DO 90 j = 1-margin,jj+margin
+        DO 90 i = 1-margin,ii+margin
+           SED(I,J,K)=SED(I,J,K)*ip(I,J)
+ 90     CONTINUE
+!----------------------------------------------------------------
+      ELSE IF (IDX.EQ.10) THEN
+!----------------------------------------------------------------
+!   Update YEL at the boundaries.
+!
+        SDUM10 = 0.
+        SDUMM0 = 0.
+        SDUM0N = 0.
+!
+        CALL RELAX(YELE10,SDUM10,YELEM0,SDUMM0,YELE0N,SDUM0N,YEL,1,KB-1)
+!
+        DO K = 1,KB-1
+          YEL(IBALT,1,K) = YELSOUTH(K)
+        END DO
+!
+        DO 100 k = 1,KB-1
+        DO 100 j = 1-margin,jj+margin
+        DO 100 i = 1-margin,ii+margin
+           YEL(I,J,K)=YEL(I,J,K)*ip(I,J)
+ 100    CONTINUE
+!
+#ifdef CHATONELLA
+!----------------------------------------------------------------
+      ELSE IF (IDX.EQ.11) THEN
+!----------------------------------------------------------------
+!   Update CHA at the boundaries.
+!
+        SDUM10 = 0.
+        SDUMM0 = 0.
+        SDUM0N = 0.
+!
+        CALL RELAX(CHAE10,SDUM10,CHAEM0,SDUMM0,CHAE0N,SDUM0N,CHA,1,KB-1)
+!
+        DO K = 1,KB-1
+          CHA(IBALT,1,K) = CHASOUT(K)
+        END DO
+!
+        DO 110 k = 1,KB-1
+        DO 110 j = 1-margin,jj-margin
+        DO 110 i = 1-margin,ii+margin
+           CHA(I,J,K)=CHA(I,J,K)*ip(I,J)
+ 110    CONTINUE
+#endif
+!----------------------------------------------------------------
+      ELSE
+!----------------------------------------------------------------
+         write(*,*)'*** FATAL ERROR in BIOBOUND ***'
+         write(*,*)'*** UNKNOWN VALUE of IDX =',idx
+         stop
+!----------------------------------------------------------------
+      ENDIF
+!----------------------------------------------------------------
+!
+!***END BOUND
+!
+      RETURN
+      end subroutine biobound
+      end module m_NOR05_biobound
+      

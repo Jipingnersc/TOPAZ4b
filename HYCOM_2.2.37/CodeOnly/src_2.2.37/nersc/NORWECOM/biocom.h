@@ -1,0 +1,113 @@
+!                       COMMON DECLARATIONS
+!
+! Nutrients common declarations
+!
+!      REAL NIT(IM,JM,KB),PHO(IM,JM,KB),SIL(IM,JM,KB)
+!      COMMON /NUTCOM/NIT,PHO,SIL
+!
+! Biological common declarations
+!
+!      REAL DET(IM,JM,KB),FLA(IM,JM,KB),DIA(IM,JM,KB)
+!      COMMON /BIOCOM/DET,FLA,DIA
+!      REAL DETP(IM,JM,KB),DETPSURF(IM,JM),DETPSOUT(KB)
+!      COMMON /DETPCOM/DETP,DETPSURF,DETPSOUT
+!      REAL DETPE10(LB,JM,KB),DETPEM0(LB,JM,KB),DETPE0N(IM,LB,KB)
+!      COMMON/DETPEXT/DETPE10,DETPEM0,DETPE0N
+      REAL  AA(6)
+      REAL  KN_DIA,KP_DIA,KS_DIA,KR_DIA
+      REAL  KN_FLA,KP_FLA,KR_FLA
+      COMMON /PHGRCO/AA,KN_DIA,KN_FLA,KP_DIA,KP_FLA,KS_DIA,KR_DIA,KR_FLA
+!
+      REAL,dimension(1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy,1:kdm):: DEATH_DIA
+      REAL,dimension(1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy,1:kdm):: DEATH_FLA
+      COMMON /PDEATH/DEATH_DIA,DEATH_FLA
+
+      REAL,dimension(1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy,1:kdm):: ZEN_DON 
+      REAL,dimension(1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy,1:kdm):: ZIN_DON 
+      REAL,dimension(1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy,1:kdm):: P1N_ZEN 
+      REAL,dimension(1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy,1:kdm):: P2N_ZIN
+      REAL,dimension(1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy,1:kdm):: P1N_ZIN
+      REAL,dimension(1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy,1:kdm):: ZEN_D1N 
+      REAL,dimension(1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy,1:kdm):: ZIN_D1N     
+      REAL,dimension(1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy,1:kdm):: D1N_ZEN
+      REAL,dimension(1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy,1:kdm):: D1N_ZIN
+      REAL,dimension(1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy,1:kdm):: ZIN_ZEN
+
+      COMMON /ZZOG/ZEN_DON,ZIN_DON,P1N_ZEN,P2N_ZIN,P1N_ZIN,ZEN_D1N,
+     &    ZIN_D1N,D1N_ZEN,D1N_ZIN,ZIN_ZEN
+!
+! Light common declaration
+!
+!     REAL,dimension(1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy,1:kdm):: RAD
+!     COMMON /LIGHT/RAD
+!
+      REAL,dimension(1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy,1:kdm):: PROD_DIA,
+     &       PROD_FLA
+      REAL,dimension(1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy,1:kdm):: red_dia,
+     &      red_fla
+      COMMON/PHYTO/ PROD_DIA,PROD_FLA,RED_DIA,RED_FLA
+!
+! Boundary zone
+!
+!      REAL NITE10(LB,JM,KB),NITEM0(LB,JM,KB),NITE0N(IM,LB,KB)
+!      REAL PHOE10(LB,JM,KB),PHOEM0(LB,JM,KB),PHOE0N(IM,LB,KB)
+!      REAL SILE10(LB,JM,KB),SILEM0(LB,JM,KB),SILE0N(IM,LB,KB)
+!      REAL DIAE10(LB,JM,KB),DIAEM0(LB,JM,KB),DIAE0N(IM,LB,KB)
+!      REAL FLAE10(LB,JM,KB),FLAEM0(LB,JM,KB),FLAE0N(IM,LB,KB)
+!      REAL DETE10(LB,JM,KB),DETEM0(LB,JM,KB),DETE0N(IM,LB,KB)
+!
+!      COMMON/NITEXT/NITE10,NITEM0,NITE0N
+!      COMMON/PHOEXT/PHOE10,PHOEM0,PHOE0N
+!      COMMON/SILEXT/SILE10,SILEM0,SILE0N
+!      COMMON/DIAEXT/DIAE10,DIAEM0,DIAE0N
+!      COMMON/FLAEXT/FLAE10,FLAEM0,FLAE0N
+!      COMMON/DETEXT/DETE10,DETEM0,DETE0N
+!
+!      REAL DIASOUT(KB),FLASOUT(KB),NSOUTH(KB),PSOUTH(KB)
+!      REAL DETSOUT(KB),SISOUT(KB)
+!      COMMON/BIOSOUTH/NSOUTH,PSOUTH,SISOUT,DIASOUT,FLASOUT,DETSOUT
+!
+!                     CONSTANTS
+!
+! Atomic weights
+!   CNIT = nitrate
+!   CPHO = phosphate
+!   CSIL = silicate
+!
+      REAL CNIT,CPHO,CSIL
+      DATA CNIT/14.01/,CPHO/30.97/,CSIL/28.09/
+
+!!!! Moved to mod_neccessary_ecovars
+!!   CC(1)    : FRACTION OF PHOSPHATE AND NITRATE IN A CELL
+!!   CC(2)    : FRACTION OF SILICATE AND NITRATE IN A CELL
+!!   CC(3)    : DEATH RATE
+!!   CC(4)    : RATE OF DECOMPOSITION OF DETRITUS
+!!
+!      REAL      CC(4)
+!#if defined(ZOOPL)
+!      DATA      CC(1)/0.138/,CC(2)/1.75/,CC(3)/4.00E-7/,CC(4)/1.52E-7/
+!#else
+!      DATA      CC(1)/0.138/,CC(2)/1.75/,CC(3)/1.60E-6/,CC(4)/1.52E-7/
+!#endif
+!CH      DATA      CC(1)/0.138/,CC(2)/1.75/,CC(3)/2.315E-7/,CC(4)/1.52E-7/
+!
+! Minimum values of phytoplankton concentrations
+!
+      REAL DIAMIN,FLAMIN
+      PARAMETER(DIAMIN=0.1,FLAMIN=0.1)
+!
+!   N2CHLA   : FRACTION OF NITRATE AND CHLOROPHYLL A IN A CELL.
+!   MY       : COSINE OF THE MEAN ZENIT ANGLE OF THE DIFFUSE LIGHT.
+!   NY       : CHLOROPHYLL LIGHT EXTINCTION COEFFISIENT.
+!   PAR      : Photosynthetic active radiance
+!   B2       : Extinction due to water
+!   RC1      : Refraction coefficient air
+!   RC2      : Refraction coefficient water
+!
+      REAL MY_nor,NY_nor,PAR,n2chla
+      PARAMETER (MY_nor=0.83,NY_nor=1.38E-2,PAR=0.40,N2CHLA=11.0)
+      real b2,rc1,rc2
+      parameter (B2=0.04,RC1=1.0,RC2=1.34)
+!--- Inverse day
+      REAL DAYINV
+      PARAMETER (DAYINV=1./86400.)

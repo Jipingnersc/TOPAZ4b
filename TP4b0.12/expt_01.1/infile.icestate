@@ -1,0 +1,10 @@
+1.1            # FILE    : Version number of this file
+0.600          # ALBEDO  : Albedo value of melting ice []
+0.730          # ALBEDO  : Albedo value of dry ice []
+0.710          # ALBEDO  : Minimum albedo value of snow []
+0.850          # ALBEDO  : Maximum albedo value of snow []
+0.100          # FREEZE  : Initial thickness of frozen ice [m]
+0.995          # LEAD    : Maximum value for ice concentration []
+0.400          # SNWLIM  : Maximum allowed snow thickness [m]
+0.300          # QSTORE  : Max heat store in frac. of ice latent heat []
+ 1             # LATERAL MELT: 0=none, 1=standard (Drange94), 2=Hakkinen & Mellor

@@ -1,0 +1,5 @@
+4                   # Number of corner points for region
+-30  20  20  -30       # Lon of corners ... (region must be convex and traversed 
+60     60  75   75   # Lat of corners ...  in clockwise or anticlockwise direction)
+D1 D2               # Depth interval
+T1       T2         # Time interval (format: yyyymmdd)

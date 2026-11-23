@@ -1,0 +1,11 @@
+T                     # Flag for relaxation on Eastern  boundary
+T                     # Flag for relaxation on Western  boundary
+T                     # Flag for relaxation on Southern boundary
+T                     # Flag for relaxation on Northern boundary
+20                    # Boundary relaxation length (grid cells)
+20                    # Point relaxation length (grid cells) 
+20                    # Time relax
+BER T -167.0 66.5     # Bering Sea point
+MED F   -6.0 36.0     # Bering Sea point
+END T    0.0  0.0     # !!!!! Ends point specification
+#140 140   22 27 F     # Specifies rectangle boundary flags (Switches off (F) relaxation in this rectangle grid)

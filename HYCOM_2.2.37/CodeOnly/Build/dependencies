@@ -1,0 +1,151 @@
+# Dependencies when NERSC_VERSION is defined
+ifneq  (,$(findstring -DNERSC_VERSION,$(CPPFLAGSNERSC)))
+   mod_common_ice.o : mod_xc.o  mod_year_info.o mod_hycom_nersc.o
+   mod_hycom.o : mod_common_ice.o m_limits.o mod_gridp.o mod_hycom_nersc.o mod_restart.o  \
+      m_icemodels_read_restart.o m_icemodels_save_restart.o m_icemodels_init.o m_icemodels_step.o \
+      mod_random_forcing.o
+   mod_diagnostics.o : mod_forcing_nersc.o mod_year_info.o
+   mod_forcing_nersc.o : mod_xc.o mod_hycom_nersc.o mod_common_ice.o
+   mod_hycom_nersc.o : mod_year_info.o
+   mod_average.o : mod_xc.o mod_year_info.o 
+   mod_daily_average.o : mod_xc.o mod_year_info.o mod_forcing_nersc.o mod_common_ice.o
+   m_limits.o     : mod_xc.o mod_diagnostics.o mod_forcing_nersc.o mod_average.o \
+                    mod_daily_average.o mod_nesting.o mod_gridp.o mod_hycom_nersc.o \
+                    mod_tides_nersc.o  mod_random_forcing.o
+   mod_nesting.o  : mod_xc.o mod_year_info.o mod_hycom_nersc.o
+   mod_floats.o  : mod_year_info.o mod_hycom_nersc.o
+   mod_tides_nersc.o    : mod_xc.o 
+   mod_gridp.o    : mod_xc.o mod_diagnostics.o mod_year_info.o
+   mod_tides_nersc.o : mod_xc.o mod_forcing_nersc.o mod_year_info.o 
+   mod_restart.o  :  mod_xc.o mod_year_info.o mod_common_ice.o 
+   m_icemodels_read_restart.o  :  mod_xc.o mod_year_info.o mod_common_ice.o 
+   m_icemodels_save_restart.o  :  mod_xc.o mod_year_info.o mod_common_ice.o
+   m_icemodels_init.o  :  mod_xc.o mod_year_info.o mod_common_ice.o 
+   m_thermf_nersc.o : mod_forcing_nersc.o mod_common_ice.o mod_year_info.o mod_xc.o
+   m_icemodels_init.o  :  mod_xc.o mod_year_info.o mod_common_ice.o  m_thermf_nersc.o
+   m_icemodels_step.o  :  mod_xc.o mod_year_info.o mod_common_ice.o m_icemodels_advect.o m_depthave.o
+   m_icemodels_advect.o  :  mod_xc.o tsadvc.o
+   mod_random_forcing.o  : mod_xc.o mod_forcing_nersc.o 
+   
+   # Dependencies when EVP is defined
+   ifneq  (,$(findstring -DEVP,$(CPPFLAGSNERSC)))
+      m_icemodels_step.o          : m_evp_next_step.o
+     mod_archiv.o: \
+              mod_archiv.F mod_xc.o common_blocks.h mod_common_ice.o mod_za.o
+      evp_init_from_hycom.o       : mod_raw_io.o
+      mod_daily_average.o         : mod_evp.o
+   endif
+
+   # Dependencies when WEEKLY_AVERAGE is defined
+   ifneq  (,$(findstring -DWEEKLY_AVERAGE,$(CPPFLAGSNERSC)))
+      mod_restart.o  :  mod_average.o mod_common_ice.o
+      ifneq  (,$(findstring -DEVP,$(CPPFLAGSNERSC)))
+         mod_average.o  :  mod_evp.o
+      endif
+
+      # Dependencies when ICESTATE is defined
+      ifneq  (,$(findstring -DICESTATE,$(CPPFLAGSNERSC)))
+         mod_average.o  :  mod_icestate.o mod_icestate_fluxes.o
+      endif
+
+   endif
+
+   # Dependencies when ICESTATE is defined
+   ifneq  (,$(findstring -DICESTATE,$(CPPFLAGSNERSC)))
+      mod_common_ice.o : mod_icestate.o mod_icestate_diag.o
+      m_icemodels_init.o      :  mod_icestate_init.o
+      m_icemodels_step.o      :  mod_icestate_redist.o m_icestate_thermf.o \
+                                 mod_icestate_transfer.o
+      mod_restart.o           :  mod_icestate_init.o  mod_icestate.o
+      mod_icestate.o          :  mod_xc.o 
+      mod_icestate_tools.o    :  mod_icestate.o
+      mod_icestate_fluxes.o   :  mod_icestate.o 
+      mod_icestate_srfbudget.o:  mod_icestate.o 
+      mod_icestate_diag.o     :  mod_icestate.o mod_icestate_tools.o mod_icestate_fluxes.o
+      mod_icestate_init.o     :  mod_icestate.o \
+                                 mod_icestate_tools.o mod_icestate_srfbudget.o \
+                                 mod_icestate_redist.o mod_icestate_hpar.o
+      m_icestate_thermf.o     :  mod_icestate.o mod_icestate_diag.o \
+                                 mod_year_info.o mod_icestate_diag.o mod_icestate_tools.o \
+                                 mod_icestate_hpar.o m_icestate_heatsolve.o \
+                                 m_icestate_exchange.o  m_icestate_solar.o m_icestate_prec.o \
+                                 m_thermf_nersc.o
+      m_icestate_prec         :  mod_icestate.o
+      m_icestate_solar        :  mod_icestate.o
+      
+      # Dependencies when EVP is defined
+      ifneq  (,$(findstring -DEVP,$(CPPFLAGSNERSC)))
+         m_hycomtoevp.o       : mod_icestate.o
+      endif
+
+   endif
+   # Dependencies when NOR05 is defined
+   ifneq  (,$(findstring -DNOR05,$(CPPFLAGSNERSC)))
+      trcupd.o                : mod_necessary_ecovars.o  m_NOR05_biochm.o m_NOR05_checknan.o \
+                                m_NOR05_initialize_ecosys.o m_NOR05_initialize_sed.o \
+                                m_NOR05_riverloads.o
+      forfun.o                : m_NOR05_relaxation.o mod_necessary_ecovars.o
+      mod_nesting.o           : mod_necessary_ecovars.o
+      mod_daily_average.o     : mod_necessary_ecovars.o
+      mod_restart.o           : m_NOR05_sed_restart.o
+      m_NOR05_affin.o         : mod_xc.o biocom.h
+      m_NOR05_atmnit.o        : mod_xc.o mod_necessary_ecovars.o
+      m_NOR05_biochm.o        : mod_xc.o mod_year_info.o mod_necessary_ecovars.o \
+                                mod_common_ice.o m_NOR05_botstress.o m_NOR05_affin.o \
+                                m_NOR05_atmnit.o m_NOR05_biosun.o m_NOR05_botsource.o \
+                                mod_checknan.o m_NOR05_comprad.o m_NOR05_deadbot.o \
+                                m_NOR05_declin.o m_NOR05_detritus.o m_NOR05_irrsur.o \
+                                m_NOR05_nconservation.o m_NOR05_oxysat.o m_NOR05_phyto_growth.o \
+                                m_NOR05_phyto_sed.o m_NOR05_micomsink.o m_NOR05_radiation.o \
+                                m_NOR05_resusp.o m_NOR05_slim.o m_NOR05_snell.o \
+                                m_NOR05_source.o m_NOR05_trans.o m_NOR05_wqual.o \
+                                m_NOR05_primp.o m_NOR05_zoo_growth.o
+      m_NOR05_biosun.o        : mod_xc.o
+      m_NOR05_botsource.o     : mod_xc.o mod_necessary_ecovars.o mod_checknan.o
+      m_NOR05_botstress.o     : mod_xc.o
+      m_NOR05_chacknan.o      : mod_xc.o
+      m_NOR05_comprad.o       : mod_xc.o m_NOR05_biosun.o m_NOR05_fx.o
+      m_NOR05_deadbot.o       : mod_xc.o mod_necessary_ecovars.o
+      m_NOR05_detritus.o      : mod_xc.o mod_necessary_ecovars.o
+      m_NOR05_initialize_ecosys.o : mod_xc.o mod_za.o mod_necessary_ecovars.o \
+                                    m_NOR05_riverloads.o
+      m_NOR05_initialize_sed.o    : mod_xc.o mod_necessary_ecovars.o
+      m_NOR05_irrsur.o        : mod_xc m_NOR05_fx.o mod_checknan.o
+      m_NOR05_micomsink.o     : mod_xc.o mod_necessary_ecovars.o
+      m_NOR05_nconservation.o : mod_xc.o mod_necessary_ecovars.o
+      m_NOR05_oxysat.o        : mod_xc.o mod_necessary_ecovars.o mod_common_ice.o
+      m_NOR05_phyto_growth.o  : mod_xc.o mod_necessary_ecovars.o m_NOR05_biosun.o \
+                                m_NOR05_slim.o mod_checknan.o
+      m_NOR05_phyto_sed.o     : mod_xc.o mod_necessary_ecovars.o
+      m_NOR05_primp.o         : mod_necessary_ecovars.o mod_xc.o mod_checknan.o
+      m_NOR05_radiation.o     : mod_xc.o mod_necessary_ecovars.o
+      m_NOR05_resusp.o        : mod_xc.o mod_necessary_ecovars.o
+      m_NOR05_riverloads.o    : mod_xc.o mod_necessary_ecovars.o mod_za.o \
+                                mod_checknan.o
+      m_NOR05_sed_restart.o   : mod_necessary_ecovars.o mod_year_info.o mod_za.o \
+                                mod_hycom_nersc.o mod_xc.o
+      m_NOR05_snell.o         : mod_xc.o
+      m_NOR05_source.o        : mod_xc.o mod_necessary_ecovars.o mod_checknan.o
+      m_NOR05_trans.o         : mod_xc.o
+      m_NOR05_wqual.o         : mod_xc.o
+      m_NOR05_zoo_growth.o         : mod_xc.o mod_necessary_ecovars.o
+      mod_necessary_ecovars.o : mod_xc.o 
+   endif
+
+   # Dependencies when CALANUS is defined
+   ifneq  (,$(findstring -DCALANUS,$(CPPFLAGSNERSC)))
+      mod_floats.o            : mod_year_info.o mod_hycom_nersc.o \
+                                m_CAL06_read_restart.o mod_CAL06_calnusparticles.o \
+                                m_CAL06_initializecfmod.o m_CAL06_calanus.o \
+                                mod_CAL06_read_norwecomcarbon.o
+      m_CAL06_initializecfmod.o 	: mod_CAL06_calnusparticles.o \
+                                          mod_CAL06_read_norwecomcarbon.o  mod_xc.o \
+                                          mod_year_info.o
+      mod_CAL06_calnusparticles.o	: mod_xc.o
+      m_CAL06_read_restart.o  : mod_xc.o mod_year_info.o mod_CAL06_calnusparticles.o
+      mod_CAL06_read_norwecomcarbon.o   : mod_year_info.o mod_xc.o
+      m_thermf_nersc.o        : mod_CAL06_calnusparticles.o
+   endif
+
+   # Others?
+endif

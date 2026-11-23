@@ -1,0 +1,124 @@
+      module m_NOR05_primp
+
+      contains
+
+       subroutine NOR05_primp(year,day_rt,hour_rt,sec_rt,k_list,n)
+c      Routine to compute the net primaryproduction (growth-respiration)
+c      using an area in the smallest model to find which grid points
+c      in the parent model(s) to include and use. The primary production
+c      will be computed per volume, as these will be different from
+c      model to model.
+c 
+c      Cecilie Hansen, january 07.
+c
+      use mod_necessary_ecovars
+      use mod_xc
+      use mod_checknan
+
+      implicit none
+      
+      include 'common_blocks.h'
+      include 'biocom.h'
+      include 'sedcom.h'
+
+      integer,intent(in) :: n
+      integer,intent(in) :: day_rt,hour_rt,sec_rt,year
+      integer,dimension(1-nbdy:idm+nbdy,1-nbdy:jdm+nbdy),intent(in)::
+     &                  k_list 
+      
+      real :: net_primp,gross_primp,dia_np,dia_gp,fla_np,fla_gp
+      real :: nit_tot,pho_tot,sil_tot,det_tot,sis_tot,
+     &        fla_tot,dia_tot,oxy_tot
+      real :: day_time
+      real :: n2c !nitrate to carbon
+      integer :: i,j,k,kmax
+
+      margin=0.
+
+      n2c=106./(16.*1000.) !transferring mgN/m3 to gC/m3
+      
+      net_primp=0.
+      gross_primp=0.
+      dia_np=0.
+      dia_gp=0.
+      fla_np=0.
+      fla_gp=0.
+      nit_tot=0.
+      pho_tot=0.
+      sil_tot=0.
+      det_tot=0.
+      sis_tot=0.
+      fla_tot=0.
+      dia_tot=0.
+      oxy_tot=0.
+
+      do j=1-margin,jj+margin
+      do i=1-margin,ii+margin
+      kmax=k_list(i,j)
+      do k=1,kmax
+         if(pp_area(i,j)) then
+            net_primp= net_primp
+     &               + (prod_dia(i,j,k)+prod_fla(i,j,k)
+     &               - red_dia(i,j,k)-red_fla(i,j,k))*n2c
+     &               *(dp(i,j,k,n)/onem)*scp2(i,j)
+            gross_primp= gross_primp
+     &                 + (prod_dia(i,j,k)+prod_fla(i,j,k))*n2c
+     &                 *(dp(i,j,k,n)/onem)*scp2(i,j)
+            dia_np=dia_np+(prod_dia(i,j,k)-red_dia(i,j,k))*n2c
+     &                 *(dp(i,j,k,n)/onem)*scp2(i,j)
+            dia_gp=dia_gp+prod_dia(i,j,k)*n2c
+     &                 *(dp(i,j,k,n)/onem)*scp2(i,j)
+            fla_np=fla_np+(prod_fla(i,j,k)-red_fla(i,j,k))*n2c
+     &                 *(dp(i,j,k,n)/onem)*scp2(i,j)
+            fla_gp=fla_gp+prod_fla(i,j,k)*n2c
+     &                 *(dp(i,j,k,n)/onem)*scp2(i,j)
+            nit_tot=nit_tot+bio(i,j,k,n,init)
+     &                 *(dp(i,j,k,n)/onem)*scp2(i,j)
+            pho_tot=pho_tot+bio(i,j,k,n,ipho)
+     &                 *(dp(i,j,k,n)/onem)*scp2(i,j)
+            sil_tot=sil_tot+bio(i,j,k,n,isil)
+     &                 *(dp(i,j,k,n)/onem)*scp2(i,j)
+            det_tot=det_tot+bio(i,j,k,n,idet)
+     &                 *(dp(i,j,k,n)/onem)*scp2(i,j)
+            sis_tot=sis_tot+bio(i,j,k,n,isis)
+     &                 *(dp(i,j,k,n)/onem)*scp2(i,j)
+            fla_tot=fla_tot+bio(i,j,k,n,ifla)
+     &                 *(dp(i,j,k,n)/onem)*scp2(i,j)
+            dia_tot=dia_tot+bio(i,j,k,n,idet)
+     &                 *(dp(i,j,k,n)/onem)*scp2(i,j)
+            oxy_tot=oxy_tot+bio(i,j,k,n,ioxy)
+     &                 *(dp(i,j,k,n)/onem)*scp2(i,j)
+         endif
+       enddo
+       enddo
+       enddo
+
+       net_primp =  net_primp*86400/(pp_m2)
+       gross_primp= gross_primp*86400/(pp_m2)
+       dia_np= dia_np*86400/(pp_m2)
+       dia_gp= dia_np*86400/(pp_m2)
+       fla_np= fla_np*86400/(pp_m2)
+       fla_gp= fla_np*86400/(pp_m2)
+       nit_tot= nit_tot*86400/(pp_m2)
+       pho_tot= pho_tot*86400/(pp_m2)
+       sil_tot= sil_tot*86400/(pp_m2)
+       det_tot= det_tot*86400/(pp_m2)
+       sis_tot= sis_tot*86400/(pp_m2)
+       fla_tot= fla_tot*86400/(pp_m2)
+       dia_tot= dia_tot*86400/(pp_m2)
+       oxy_tot= oxy_tot*86400/(pp_m2)
+
+       day_time=real(day_rt)+real(hour_rt)/(24.0)
+     &         +real(sec_rt)/(24.0*60.0*60.0)
+       
+       open(29,file='primary_production.dat',position='append',
+     &      status='unknown')
+       write(29,*) year,day_time,net_primp,gross_primp,
+     &             dia_np,dia_gp,fla_np,fla_gp,
+     &             nit_tot,pho_tot,sil_tot,det_tot,sis_tot,
+     &             fla_tot,dia_tot,oxy_tot  
+       close(29)
+      
+      end subroutine NOR05_primp
+
+      end module m_NOR05_primp

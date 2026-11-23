@@ -1,0 +1,2 @@
+#define ICE
+#define DAILY_DIAGNOSTICS_PROCESS

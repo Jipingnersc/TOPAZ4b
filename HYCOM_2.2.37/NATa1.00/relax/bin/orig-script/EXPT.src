@@ -1,0 +1,7 @@
+#
+# --- environment variables defining the region and experiment number.
+#
+setenv R NATa1.00  # Grid name
+setenv E 010       # Experiment number
+setenv X 01.0      # Experiment number /10
+setenv T 01        # Topo version

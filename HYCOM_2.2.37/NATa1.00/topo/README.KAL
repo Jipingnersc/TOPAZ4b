@@ -1,0 +1,33 @@
+This directory contains the model topography. 
+NERSC- generated topography usually uses the confgrid routines.
+Most routines give additional info if called with no arguments
+
+List of routines in bin dir :
+----------------
+ATLb2.00
+   The directory ATLb2.00 contains sample scripts for generating
+   topography using scripts supplied in original hycom.
+
+regioncopy.sh
+   regioncopy.sh is used to import a topography file  from an older NERSC-HYCOM
+   model run. Run with no arguments for more info
+   
+nestbat.sh
+   nestbat.sh will smooth a topography towards that of an outer model. Run with
+   no arguments for more info
+
+addhuge.py
+   This script can be used to put "mask" values on land regions of the
+   topography.  This script is used to modify old regional.depth files so that 
+   land values are not zero, but a mask value (2.0^100.0). This land-value in
+   the topography files is new in HYCOM-NERSC 2.2.
+
+depthtoregional.py
+   Can be used to convert depth files to standard hycom topography file format.
+
+toponame.sh 
+   Simply returns the correct name of a topography file
+
+tile_grid.sh
+   Used to set up partitions for MPI runs.
+

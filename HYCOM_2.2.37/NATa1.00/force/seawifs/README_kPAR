@@ -1,0 +1,29 @@
+Monthly fields of kPAR, i.e. the attenuation length scale of 
+photosynthetically available radiation (PAR), based on k490 from 
+SeaWiFS 1997-2001.
+
+Rochford P.A., A.B. Kara, A.J. Wallcraft and R.A. Arnone, 2001:
+Importance of solar subsurface heating in ocean general circulation 
+models.  J. Geophys. Res., 106, 30923-30938.
+
+Stored on the COADS grid in "NRL wind" file format, process with 
+hycom/ALL/force/src/kp.  See seawifs_mon_kpar_EXAMPLE.com.
+
+> wind_stat seawifs_mon_kpar.d
+SeaWiFS monthly kPAR, 0.04 to 0.20, 1/m 
+IWI,JWI = 360, 180    XFIN,YFIN =    0.50,  -89.50    DXIN,DYIN = 1.000, 1.000
+NREC =   12     WDAY =
+  1111.00  1142.00  1171.00  1202.00  1232.00  1263.00  1293.00  1324.00
+  1355.00  1385.00  1416.00  1446.00  1477.00
+   12 RECORD CLIMATOLOGY STARTING ON  16.00/1904 COVERING   366.00 DAYS
+
+> wind_stat seawifs_ann_kpar.d
+SeaWiFS annual kPAR, 0.04 to 0.20, 1/m  
+IWI,JWI = 360, 180    XFIN,YFIN =    0.50,  -89.50    DXIN,DYIN = 1.000, 1.000
+NREC =    1     WDAY =
+  1096.00  1462.00
+    1 RECORD CLIMATOLOGY STARTING ON   1.00/1904 COVERING   366.00 DAYS
+
+This version is landfilled using a creeping fill method, so interpolate
+it with bi-linear interpolation rather than cubic splines (because it
+may be discontinuous away from the ocean).
